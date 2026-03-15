@@ -69,7 +69,7 @@ export function SettingsPage() {
           />
           <SetupItem
             done={true}
-            label="Telegram bot (@welday007_bot) configured"
+            label="Telegram bot (@Moneypenny_Welday_Ent_bot) configured"
             detail="Bot is active — messages routed to gtd_inbox table via webhook"
           />
           <SetupItem
@@ -99,7 +99,7 @@ export function SettingsPage() {
           {[
             { label: "Supabase", value: "lqtamdgtbokewphcgwzy · East US · Free tier" },
             { label: "Vercel", value: "Free tier · Static deploy + Serverless functions" },
-            { label: "Telegram Bot", value: "@welday007_bot (Jarvis) · GTD inbox capture" },
+            { label: "Telegram Bot", value: "@Moneypenny_Welday_Ent_bot (Moneypenny) · GTD inbox capture" },
             { label: "ChatGPT Plus", value: "Via Coadex Desktop · GTD filer + CEO agent" },
             { label: "Google One", value: "Via Antigravity · Calendar + Tasks sync" },
             { label: "Lovable", value: "11 venture sub-apps (one per venture, free plan)" },

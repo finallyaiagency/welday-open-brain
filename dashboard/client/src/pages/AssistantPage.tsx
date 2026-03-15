@@ -109,7 +109,7 @@ export function AssistantPage() {
     {
       id: "welcome",
       role: "assistant",
-      content: "Ready. Ask me what to focus on, what's due, or just say 'briefing' for a daily rundown.",
+      content: "Ready, sir. Ask me what to focus on, what's due, or just say 'briefing' for a daily rundown.",
       ts: new Date(),
     },
   ]);
@@ -138,6 +138,7 @@ export function AssistantPage() {
     setLoading(true);
 
     // Build history for context (exclude welcome message)
+    const persona = "moneypenny";
     const history = messages
       .filter(m => m.id !== "welcome")
       .map(m => ({ role: m.role, content: m.content }));
@@ -149,6 +150,7 @@ export function AssistantPage() {
         body: JSON.stringify({
           message: userText,
           history,
+          persona,
         }),
       });
 
@@ -185,7 +187,7 @@ export function AssistantPage() {
     setMessages([{
       id: "welcome",
       role: "assistant",
-      content: "Ready. Ask me what to focus on, what's due, or just say 'briefing' for a daily rundown.",
+      content: "Ready, sir. Ask me what to focus on, what's due, or just say 'briefing' for a daily rundown.",
       ts: new Date(),
     }]);
   }
@@ -293,7 +295,7 @@ export function AssistantPage() {
           </Button>
         </div>
         <p className="text-[10px] text-muted-foreground mt-1.5 text-center">
-          Also available in Telegram — message <strong>@welday007_bot</strong> any time
+          Also available in Telegram — message <strong>@Moneypenny_Welday_Ent_bot</strong> any time
         </p>
       </div>
     </div>

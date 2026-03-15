@@ -8,7 +8,7 @@
 A full-stack AI-powered operations dashboard for Welday Enterprises (11 ventures) with:
 - **React + Vite + Express + Tailwind + shadcn/ui** frontend/backend
 - **Supabase** (PostgreSQL) database with 14 tables
-- **3 AI agents**: Virtual CEO (Burns), Executive Assistant (Smithers/Jailbait), GTD Filer (Radar)
+- **3 AI agents**: Virtual CEO (Burns), Executive Assistant (Smithers/Moneypenny), GTD Filer (Radar)
 - **4 Telegram bots** with role-aware personalities
 - **8 dashboard pages**: Overview, Ventures, Assistant, CEO, GTD, Inbox, Search, Settings
 - **Google OAuth** login via Supabase
@@ -143,7 +143,7 @@ GEMINI_API_KEY_3           = <Google account 3 key — different account>
 TELEGRAM_TOKEN_BURNS       = 8654534094:REDACTED_BURNS_TOKEN
 TELEGRAM_TOKEN_SMITHERS    = 8610077511:REDACTED_SMITHERS_TOKEN
 TELEGRAM_TOKEN_RADAR       = 8765855745:REDACTED_RADAR_TOKEN
-TELEGRAM_TOKEN_JAILBAIT    = 8714056212:REDACTED_JAILBAIT_TOKEN
+TELEGRAM_TOKEN_MONEYPENNY    = 8268596065:AAGTaK74IsoULkumEgwX1zxXtoGkzML-JhE
 ```
 
 ---
@@ -155,7 +155,7 @@ TELEGRAM_TOKEN_JAILBAIT    = 8714056212:REDACTED_JAILBAIT_TOKEN
 | Burns | @Burns_Welday_Ent_bot | Virtual CEO | Mr. Burns — cold, calculating, strategic |
 | Smithers | @Smithers_Welday_Ent_bot | Executive Assistant | Waylon Smithers — efficient, professional |
 | Radar | @Radar_Welday_Ent_bot | GTD Filer | Radar O'Reilly — terse, anticipatory |
-| Jailbait | @Jailbait_Welday_Ent_bot | EA (fun variant) | Charlie Wilson's War — witty, playful |
+| Moneypenny | @Moneypenny_Welday_Ent_bot | EA (fun variant) | Sharp, witty, classic yet modern EA |
 
 **Webhook format:** `https://welday-open-brain.vercel.app/api/telegram/<botname>`
 

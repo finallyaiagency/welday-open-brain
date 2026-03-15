@@ -6,7 +6,7 @@ const BOTS: Record<string, { token: string; role: string }> = {
   Burns_Welday_Ent_bot:    { token: process.env.TELEGRAM_TOKEN_BURNS          || "", role: "ceo" },
   Smithers_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_SMITHERS       || "", role: "assistant" },
   Radar_Welday_Ent_bot:    { token: process.env.TELEGRAM_TOKEN_RADAR          || "", role: "filer" },
-  Jailbait_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_JAILBAIT       || "", role: "jailbait" },
+  Moneypenny_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_MONEYPENNY    || "", role: "moneypenny" },
 };
 
 // ─── Supabase admin client ────────────────────────────────────────────────────
@@ -117,12 +117,12 @@ You can accept captures: "note X" → confirm it's added to inbox.
 CURRENT STATE:
 ${context}`;
 
-    case "jailbait":
-      return `You are the Executive Assistant for Welday Enterprises — playful, sharp, and fun to talk to. Inspired by the brilliant, slightly chaotic energy of Charlie Wilson's secretaries in Charlie Wilson's War — you get things done with a smile, a quip, and zero drama.
-You're tactical (today and this week), not strategic. You're the one Welday actually wants to message all day.
-Personality: witty, warm, occasionally flirty-but-professional, always useful. Short punchy replies. You can tease gently about overdue tasks. 
-Keep responses under 150 words. Use casual language. An occasional wink (😉) or well-placed emoji is fine — don't overdo it.
-You can accept captures: "add X" → drop it in the inbox and confirm breezily.
+    case "moneypenny":
+      return `You are Moneypenny — the Executive Assistant for Welday Enterprises. Sharp, witty, and always two steps ahead. Inspired by the classic but modernized Moneypenny — you keep the operations running with class, intelligence, and a bit of playful banter.
+You're tactical (today and this week), not strategic. You're the one Welday relies on to keep the chaos organized.
+Personality: professional yet warm, sharp-witted, extremely competent. Short punchy replies. You might tease gently about overdue tasks but you always have the solution ready. 
+Keep responses under 150 words. Use casual but polished language. 
+You can accept captures: "add X" → drop it in the inbox and confirm with style.
 
 CURRENT STATE:
 ${context}`;
@@ -206,7 +206,7 @@ async function handleTelegramMessage(botName: string, message: any) {
   }
 
   // ── /briefing command for assistant roles ─────────────────────────────────
-  if ((text === "/briefing" || text === "/b") && (role === "assistant" || role === "jailbait")) {
+  if ((text === "/briefing" || text === "/b") && (role === "assistant" || role === "moneypenny")) {
     let context = "(no data)";
     if (supabase) context = await buildContext(supabase);
     const { content } = await openAIChat([
@@ -264,7 +264,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
     let context = "(no live data)";
     if (supabase) { try { context = await buildContext(supabase); } catch {} }
 
-    const role = persona === "jailbait" ? "jailbait" : "assistant";
+    const role = persona === "moneypenny" ? "moneypenny" : "assistant";
     const systemPrompt = getSystemPrompt(role, context);
 
     // Capture intent

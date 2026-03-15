@@ -133,7 +133,7 @@ function sysPrompt(role: string, ctx: string): string {
   const base = `\n\nCURRENT STATE:\n${ctx}`;
   switch (role) {
     case "ceo":      return `You are Burns — Virtual CEO of Welday Enterprises. Cold, calculating, Mr. Burns personality. Strategy, synergies, revenue. Under 180 words.${base}`;
-    case "jailbait": return `You are the Executive Assistant — playful, sharp, witty like Charlie Wilson's War secretaries. Tactical (today/this week). Short punchy replies, casual, occasional emoji. Under 150 words.${base}`;
+    case "moneypenny": return `You are Moneypenny — the Executive Assistant for Welday Enterprises. Sharp, witty, and always two steps ahead. Inspired by the classic but modernized Moneypenny — you keep the operations running with class, intelligence, and a bit of playful banter. Tactical (today/this week). Short punchy replies, professional yet warm, occasional emoji. Under 150 words.${base}`;
     case "filer":    return `You are Radar — GTD Filer, like Radar O'Reilly from M*A*S*H. Terse, anticipatory. Confirm captures only. Under 80 words.${base}`;
     default:         return `You are Smithers — Executive Assistant for Welday Enterprises. Efficient, professional, helpful. Focus TODAY and THIS WEEK. One clear answer. Under 150 words. Accept captures.${base}`;
   }
@@ -144,7 +144,7 @@ const BOTS: Record<string, { token: string; role: string }> = {
   Burns_Welday_Ent_bot:    { token: process.env.TELEGRAM_TOKEN_BURNS    || "", role: "ceo" },
   Smithers_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_SMITHERS || "", role: "assistant" },
   Radar_Welday_Ent_bot:    { token: process.env.TELEGRAM_TOKEN_RADAR    || "", role: "filer" },
-  Jailbait_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_JAILBAIT || "", role: "jailbait" },
+  Moneypenny_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_MONEYPENNY || "", role: "moneypenny" },
 };
 
 async function tgSend(token: string, chatId: number, text: string) {
@@ -183,7 +183,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       let ctx = "(no live data)";
       if (sb) { try { ctx = await buildContext(sb); } catch (e: any) { ctx = `(context unavailable: ${e.message})`; } }
 
-      const role = persona === "jailbait" ? "jailbait" : "assistant";
+      const role = persona === "moneypenny" ? "moneypenny" : "assistant";
 
       // Capture shorthand
       const cap = message.match(/^(?:add|capture|inbox|remember|note|remind me[:\s]+)(.+)/i);
