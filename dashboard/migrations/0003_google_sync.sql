@@ -21,6 +21,15 @@ end $$;
 alter table calendar_events
   add column if not exists source text not null default 'manual';
 
+alter table calendar_events
+  add column if not exists google_event_id text;
+
+alter table calendar_events
+  add column if not exists google_calendar_id text;
+
+alter table calendar_events
+  add column if not exists last_synced_at timestamptz;
+
 do $$
 begin
   if not exists (
@@ -43,3 +52,7 @@ where source is null;
 create unique index if not exists idx_gtd_actions_google_task_id_unique
   on gtd_actions(google_task_id)
   where google_task_id is not null;
+
+create unique index if not exists idx_calendar_events_google_event_id_unique
+  on calendar_events(google_event_id)
+  where google_event_id is not null;
