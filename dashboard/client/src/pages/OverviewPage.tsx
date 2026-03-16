@@ -18,7 +18,7 @@ function KpiCard({ label, value, icon: Icon, sub }: {
   label: string; value: string | number; icon: any; sub?: string;
 }) {
   return (
-    <Card data-testid={`kpi-${label.toLowerCase().replace(/\s+/g,"-")}`}>
+    <Card data-testid={`kpi-${label.toLowerCase().replace(/\s+/g, "-")}`}>
       <CardContent className="p-4">
         <div className="flex items-start justify-between">
           <div>
@@ -81,11 +81,10 @@ export function OverviewPage() {
     queryFn: () => fetchActions("active"),
   });
 
-  const urgentActions = actions.filter((a: any) => a.due_date && new Date(a.due_date) <= new Date(Date.now() + 86400000 * 3));
+  const urgentActions = actions.filter((a: any) => a.dueDate && new Date(a.dueDate) <= new Date(Date.now() + 86400000 * 3));
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-xl font-semibold">Portfolio Overview</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
@@ -93,7 +92,6 @@ export function OverviewPage() {
         </p>
       </div>
 
-      {/* KPI row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {statsLoading ? (
           Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-lg" />)
@@ -107,10 +105,7 @@ export function OverviewPage() {
         )}
       </div>
 
-      {/* Main grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-
-        {/* Readiness chart */}
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Venture Readiness</CardTitle>
@@ -128,7 +123,6 @@ export function OverviewPage() {
           </CardContent>
         </Card>
 
-        {/* CEO Alerts */}
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -160,27 +154,23 @@ export function OverviewPage() {
             </Link>
           </CardContent>
         </Card>
-
       </div>
 
-      {/* Urgent actions + Venture grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-        {/* Urgent Actions */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Due Soon</CardTitle>
           </CardHeader>
           <CardContent className="space-y-1.5 pb-3">
             {urgentActions.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-2 text-center">Nothing urgent — you're clear</p>
+              <p className="text-xs text-muted-foreground py-2 text-center">Nothing urgent - you're clear</p>
             ) : (
               urgentActions.slice(0, 6).map((a: any) => (
                 <div key={a.id} data-testid={`action-${a.id}`} className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
                   <span className="text-xs flex-1 truncate">{a.title}</span>
                   <span className="text-[10px] text-muted-foreground tabular">
-                    {a.due_date ? new Date(a.due_date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                    {a.dueDate ? new Date(a.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "-"}
                   </span>
                 </div>
               ))
@@ -193,7 +183,6 @@ export function OverviewPage() {
           </CardContent>
         </Card>
 
-        {/* Active ventures mini-list */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Active Ventures</CardTitle>
@@ -216,7 +205,6 @@ export function OverviewPage() {
             </Link>
           </CardContent>
         </Card>
-
       </div>
     </div>
   );

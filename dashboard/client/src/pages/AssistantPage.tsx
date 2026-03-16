@@ -1,13 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import {
-  Send, Zap, Calendar, Inbox, Clock, RefreshCw, Mic, Key
+  Send, Zap, Calendar, Inbox, Clock, RefreshCw, Key
 } from "lucide-react";
 
 type Message = {
@@ -16,10 +14,9 @@ type Message = {
   content: string;
   ts: Date;
   model?: string;
-  keyIndex?: number;
+  keyIndex?: number | string;
 };
 
-// ─── Quick context strip (pulled directly from Supabase) ─────────────────────
 function useContextStrip() {
   return useQuery({
     queryKey: ["/api/ea/context"],
@@ -28,28 +25,29 @@ function useContextStrip() {
       const in3 = new Date(Date.now() + 3 * 86400000).toISOString().split("T")[0];
 
       const [overdue, todayDue, soon, inbox] = await Promise.all([
-        supabase.from("gtd_actions").select("id").eq("status", "active").lt("due_date", today),
-        supabase.from("gtd_actions").select("id").eq("status", "active").eq("due_date", today),
-        supabase.from("gtd_actions").select("id").eq("status", "active").gt("due_date", today).lte("due_date", in3),
-        supabase.from("gtd_inbox").select("id").eq("processed", false),
+        supabase.from("gtd_actions").select("*", { head: true, count: "exact" }).eq("status", "active").lt("due_date", today),
+        supabase.from("gtd_actions").select("*", { head: true, count: "exact" }).eq("status", "active").eq("due_date", today),
+        supabase.from("gtd_actions").select("*", { head: true, count: "exact" }).eq("status", "active").gt("due_date", today).lte("due_date", in3),
+        supabase.from("gtd_inbox").select("*", { head: true, count: "exact" }).eq("processed", false),
       ]);
 
       return {
-        overdue: overdue.data?.length || 0,
-        today: todayDue.data?.length || 0,
-        soon: soon.data?.length || 0,
-        inbox: inbox.data?.length || 0,
+        overdue: overdue.count || 0,
+        today: todayDue.count || 0,
+        soon: soon.count || 0,
+        inbox: inbox.count || 0,
       };
     },
     refetchInterval: 60_000,
   });
 }
 
-// ─── Context pill strip ───────────────────────────────────────────────────────
 function ContextStrip() {
   const { data, isLoading } = useContextStrip();
 
-  if (isLoading) return <div className="flex gap-2"><Skeleton className="h-6 w-20" /><Skeleton className="h-6 w-20" /></div>;
+  if (isLoading) {
+    return <div className="flex gap-2"><Skeleton className="h-6 w-20" /><Skeleton className="h-6 w-20" /></div>;
+  }
 
   const pills = [
     { icon: Clock, label: `${data?.overdue || 0} overdue`, color: data?.overdue ? "text-red-400 bg-red-500/10 border-red-500/20" : "text-muted-foreground bg-secondary border-transparent" },
@@ -69,9 +67,10 @@ function ContextStrip() {
   );
 }
 
-// ─── Message bubble ───────────────────────────────────────────────────────────
 function Bubble({ msg }: { msg: Message }) {
   const isUser = msg.role === "user";
+  const lines = msg.content.split("\n");
+
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-3`}>
       {!isUser && (
@@ -84,14 +83,14 @@ function Bubble({ msg }: { msg: Message }) {
           ? "bg-primary text-primary-foreground rounded-br-sm"
           : "bg-card border border-border rounded-bl-sm"
       }`}>
-        {msg.content.split("\n").map((line, i) => (
-          <span key={i}>{line}{i < msg.content.split("\n").length - 1 && <br />}</span>
+        {lines.map((line, i) => (
+          <span key={i}>{line}{i < lines.length - 1 && <br />}</span>
         ))}
         <div className={`text-[10px] mt-1 flex justify-between items-center ${isUser ? "text-primary-foreground/60" : "text-muted-foreground"}`}>
           <span>{msg.ts.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</span>
           {!isUser && msg.model && (
             <span className="flex items-center gap-1.5 ml-3 opacity-80 bg-primary/5 px-1.5 py-0.5 rounded border border-primary/10">
-              <span className="font-medium text-[9px] uppercase tracking-wider">{msg.model.replace("gemini-","G-")}</span>
+              <span className="font-medium text-[9px] uppercase tracking-wider">{msg.model.replace("gemini-", "G-")}</span>
               <span className="w-px h-2 bg-border" />
               <span className="font-semibold">{typeof msg.keyIndex === "string" ? msg.keyIndex : `Key ${msg.keyIndex}`}</span>
             </span>
@@ -102,30 +101,29 @@ function Bubble({ msg }: { msg: Message }) {
   );
 }
 
-// ─── Suggested prompts ────────────────────────────────────────────────────────
 const SUGGESTIONS = [
   "What's the one thing I should do right now?",
   "Give me my briefing for today",
   "What's overdue?",
   "What am I waiting on from others?",
-  "I have 30 minutes — what's worth doing?",
+  "I have 30 minutes - what's worth doing?",
   "Any urgent alerts I should know about?",
 ];
 
-// ─── Main page ────────────────────────────────────────────────────────────────
+const WELCOME_MESSAGE: Message = {
+  id: "welcome",
+  role: "assistant",
+  content: "Ready, sir. Ask me what to focus on, what's due, or just say 'briefing' for a daily rundown.",
+  ts: new Date(),
+};
+
 export function AssistantPage() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: "Ready, sir. Ask me what to focus on, what's due, or just say 'briefing' for a daily rundown.",
-      ts: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [openRouterKey, setOpenRouterKey] = useState("");
   const [showKeyInput, setShowKeyInput] = useState(false);
+  const [retryMessage, setRetryMessage] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -144,11 +142,11 @@ export function AssistantPage() {
       ts: new Date(),
     };
 
+    setRetryMessage(userText);
     setMessages(prev => [...prev, userMsg]);
     setInput("");
     setLoading(true);
 
-    // Build history for context (exclude welcome message)
     const persona = "moneypenny";
     const history = messages
       .filter(m => m.id !== "welcome")
@@ -167,10 +165,13 @@ export function AssistantPage() {
       });
 
       const data = await res.json();
-      
+
       if (!res.ok && res.status === 429) {
         setShowKeyInput(true);
+      } else {
+        setShowKeyInput(false);
       }
+
       const reply = data.reply || data.error || "Sorry, something went wrong.";
 
       setMessages(prev => [...prev, {
@@ -185,7 +186,7 @@ export function AssistantPage() {
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: "Connection error — check your Supabase + Gemini environment variables.",
+        content: "Connection error - check your Supabase and Gemini environment variables.",
         ts: new Date(),
       }]);
     } finally {
@@ -202,19 +203,15 @@ export function AssistantPage() {
   }
 
   function clearChat() {
-    setMessages([{
-      id: "welcome",
-      role: "assistant",
-      content: "Ready, sir. Ask me what to focus on, what's due, or just say 'briefing' for a daily rundown.",
-      ts: new Date(),
-    }]);
+    setMessages([{ ...WELCOME_MESSAGE, ts: new Date() }]);
+    setRetryMessage("");
+    setShowKeyInput(false);
   }
 
   const isFirstMessage = messages.length === 1;
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
       <div className="flex-shrink-0 px-5 py-4 border-b border-border">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2.5">
@@ -237,7 +234,6 @@ export function AssistantPage() {
         <ContextStrip />
       </div>
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto overscroll-contain px-5 py-4">
         {messages.map(msg => (
           <Bubble key={msg.id} msg={msg} />
@@ -258,7 +254,6 @@ export function AssistantPage() {
           </div>
         )}
 
-        {/* Suggested prompts (only when conversation is fresh) */}
         {isFirstMessage && !loading && (
           <div className="mt-4">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2 font-medium">Try asking</p>
@@ -266,7 +261,7 @@ export function AssistantPage() {
               {SUGGESTIONS.map(s => (
                 <button
                   key={s}
-                  data-testid={`suggestion-${s.substring(0,20).replace(/\s+/g,"-")}`}
+                  data-testid={`suggestion-${s.substring(0, 20).replace(/\s+/g, "-")}`}
                   onClick={() => send(s)}
                   className="text-[11px] px-2.5 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 hover:bg-primary/5 transition-all"
                 >
@@ -280,7 +275,6 @@ export function AssistantPage() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
       <div className="flex-shrink-0 px-5 py-3 border-t border-border">
         <div className="flex gap-2 items-end">
           <div className="flex-1 relative">
@@ -290,7 +284,7 @@ export function AssistantPage() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKey}
-              placeholder="Ask anything… Enter to send, Shift+Enter for new line"
+              placeholder="Ask anything... Enter to send, Shift+Enter for new line"
               rows={1}
               className="resize-none text-sm pr-2 min-h-[40px] max-h-[120px] overflow-y-auto"
               style={{ height: "auto" }}
@@ -313,18 +307,17 @@ export function AssistantPage() {
           </Button>
         </div>
         <p className="text-[10px] text-muted-foreground mt-1.5 text-center">
-          Also available in Telegram — message <strong>@Moneypenny_Welday_Ent_bot</strong> any time
+          Also available in Telegram - message <strong>@Moneypenny_Welday_Ent_bot</strong> any time
         </p>
-        
-        {/* OpenRouter Fallback UI */}
+
         {showKeyInput && (
           <div className="mt-4 p-3 rounded-lg border border-indigo-500/30 bg-indigo-500/5 animate-in fade-in slide-in-from-bottom-2 duration-300">
             <div className="flex items-center gap-2 mb-2">
               <Key size={14} className="text-indigo-500" />
-              <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wider">All Free models exhausted</p>
+              <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wider">All free models exhausted</p>
             </div>
             <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">
-              Gemini free quotas are depleted across all keys. Paste an **OpenRouter API Key** below to continue via the paid fallback.
+              Gemini free quotas are depleted across all keys. Paste an <strong>OpenRouter API key</strong> below to continue via the paid fallback.
             </p>
             <div className="flex gap-2">
               <input
@@ -334,14 +327,15 @@ export function AssistantPage() {
                 placeholder="sk-or-v1-..."
                 className="flex-1 bg-card border border-indigo-500/20 rounded px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500/40 outline-none"
               />
-              <Button 
-                size="sm" 
-                variant="outline" 
+              <Button
+                size="sm"
+                variant="outline"
                 className="h-8 border-indigo-500/30 text-indigo-500 hover:bg-indigo-500/10"
                 onClick={() => {
                   setShowKeyInput(false);
-                  send();
+                  send(retryMessage);
                 }}
+                disabled={!retryMessage.trim() || loading}
               >
                 Retry
               </Button>

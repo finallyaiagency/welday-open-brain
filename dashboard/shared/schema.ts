@@ -125,6 +125,18 @@ export const agentLogs = pgTable("agent_logs", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const businessMemory = pgTable("business_memory", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  source: text("source").notNull(),
+  agentName: text("agent_name").notNull(),
+  summary: text("summary").notNull(),
+  ventureSlugs: text("venture_slugs").array(),
+  topics: text("topics").array(),
+  importance: text("importance").default("medium"),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // ─── Insert Schemas ─────────────────────────────────────────
 export const insertGtdInboxSchema = createInsertSchema(gtdInbox).omit({ id: true, createdAt: true });
 export const insertGtdActionSchema = createInsertSchema(gtdActions).omit({ id: true, createdAt: true, updatedAt: true });
@@ -139,6 +151,7 @@ export type GtdAction = typeof gtdActions.$inferSelect;
 export type CeoRecommendation = typeof ceoRecommendations.$inferSelect;
 export type SavedDashboard = typeof savedDashboards.$inferSelect;
 export type AgentLog = typeof agentLogs.$inferSelect;
+export type BusinessMemory = typeof businessMemory.$inferSelect;
 
 export type InsertGtdInbox = z.infer<typeof insertGtdInboxSchema>;
 export type InsertGtdAction = z.infer<typeof insertGtdActionSchema>;

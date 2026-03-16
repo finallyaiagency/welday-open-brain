@@ -19,8 +19,8 @@ create extension if not exists "uuid-ossp";
 
 create table if not exists gtd_inbox (
   id            uuid primary key default uuid_generate_v4(),
-  source        text not null default 'telegram'  -- 'telegram' | 'web' | 'api' | 'ceo_agent'
-                check (source in ('telegram','web','api','ceo_agent','email')),
+  source        text not null default 'telegram'  -- 'telegram' | 'telegram_smithers' | 'telegram_moneypenny' | 'telegram_burns' | 'web' | 'api' | 'ceo_agent'
+                check (source in ('telegram','telegram_smithers','telegram_moneypenny','telegram_burns','web','api','ceo_agent','email')),
   raw_text      text not null,
   telegram_message_id bigint,
   telegram_chat_id    bigint,
@@ -295,6 +295,19 @@ create table if not exists agent_logs (
   created_at    timestamptz default now()
 );
 
+create table if not exists business_memory (
+  id            uuid primary key default uuid_generate_v4(),
+  source        text not null,
+  agent_name    text not null,
+  summary       text not null,
+  venture_slugs text[],
+  topics        text[],
+  importance    text default 'medium'
+                check (importance in ('low','medium','high')),
+  metadata      jsonb default '{}',
+  created_at    timestamptz default now()
+);
+
 -- ============================================================
 -- INDEXES for performance
 -- ============================================================
@@ -312,6 +325,7 @@ create index idx_calendar_events_start on calendar_events(start_at, end_at);
 create index idx_venture_snapshots_date on venture_health_snapshots(venture_id, snapshot_date desc);
 
 create index idx_agent_logs_created on agent_logs(agent_name, created_at desc);
+create index idx_business_memory_created on business_memory(agent_name, created_at desc);
 
 -- Full-text search indexes
 create index idx_gtd_inbox_fts on gtd_inbox using gin(to_tsvector('english', raw_text));
@@ -345,6 +359,7 @@ alter table saved_dashboards enable row level security;
 alter table schema_changelog enable row level security;
 
 alter table agent_logs enable row level security;
+alter table business_memory enable row level security;
 
 -- Service role policy (backend / agents use service_role key — full access)
 -- NOTE: For anon/public dashboard access, create specific SELECT policies per table.
