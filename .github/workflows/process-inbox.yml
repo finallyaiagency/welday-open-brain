@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Process inbox items older than 10 minutes
         run: |
-          curl --fail --show-error --silent \
+          curl --fail-with-body --show-error --silent \
             -X POST "https://welday-open-brain.vercel.app/api/gtd/process" \
             -H "x-cron-secret: ${{ secrets.GTD_PROCESS_SECRET }}" \
             -H "Content-Type: application/json" \

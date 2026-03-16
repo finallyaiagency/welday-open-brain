@@ -1445,15 +1445,23 @@ function isForcedProcessRequest(input: any) {
 }
 
 function isAuthorizedProcessRequest(req: any) {
-  const expected = process.env.GTD_PROCESS_SECRET;
-  if (!expected) return { ok: false, status: 500, error: "GTD_PROCESS_SECRET not configured" };
-
-  const provided = req.header?.("x-cron-secret") || req.headers?.["x-cron-secret"];
-  if (!provided || provided !== expected) {
-    return { ok: false, status: 401, error: "Unauthorized" };
+  const githubSecret = process.env.GTD_PROCESS_SECRET;
+  const cronSecret = process.env.CRON_SECRET;
+  if (!githubSecret && !cronSecret) {
+    return { ok: false, status: 500, error: "GTD_PROCESS_SECRET or CRON_SECRET not configured" };
   }
 
-  return { ok: true as const };
+  const providedHeader = req.header?.("x-cron-secret") || req.headers?.["x-cron-secret"];
+  if (githubSecret && providedHeader === githubSecret) {
+    return { ok: true as const };
+  }
+
+  const authorization = req.header?.("authorization") || req.headers?.authorization;
+  if (cronSecret && authorization === `Bearer ${cronSecret}`) {
+    return { ok: true as const };
+  }
+
+  return { ok: false, status: 401, error: "Unauthorized" };
 }
 
 function isAuthorizedSchemaApplyRequest(req: any) {
@@ -2471,6 +2479,31 @@ export function registerRoutes(httpServer: Server, app: Express) {
       }
       res.json({ ok: true });
     });
+  });
+
+  app.get("/api/gtd/process", async (req, res) => {
+    const auth = isAuthorizedProcessRequest(req);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const supabase = getSupabase();
+    if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+    const force = isForcedProcessRequest(req.query.force);
+    const result = await processInbox(supabase, force, 20);
+    return res.json(result.total > 0
+      ? {
+          message: force
+            ? `Processed ${result.processed} of ${result.total} inbox items immediately.`
+            : `Processed ${result.processed} of ${result.total} inbox items older than 10 minutes.`,
+          ...result,
+          force,
+        }
+      : {
+          message: force
+            ? "Nothing waiting in the inbox right now."
+            : "No inbox items older than 10 minutes were waiting.",
+          ...result,
+          force,
+        });
   });
 
   app.post("/api/gtd/process", async (req, res) => {

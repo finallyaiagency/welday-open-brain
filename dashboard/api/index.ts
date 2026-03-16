@@ -887,15 +887,23 @@ function isForcedProcessRequest(input: any) {
 }
 
 function isAuthorizedProcessRequest(req: IncomingMessage) {
-  const expected = process.env.GTD_PROCESS_SECRET;
-  if (!expected) return { ok: false, status: 500, error: "GTD_PROCESS_SECRET not configured" };
-
-  const provided = getHeader(req, "x-cron-secret");
-  if (!provided || provided !== expected) {
-    return { ok: false, status: 401, error: "Unauthorized" };
+  const githubSecret = process.env.GTD_PROCESS_SECRET;
+  const cronSecret = process.env.CRON_SECRET;
+  if (!githubSecret && !cronSecret) {
+    return { ok: false, status: 500, error: "GTD_PROCESS_SECRET or CRON_SECRET not configured" };
   }
 
-  return { ok: true as const };
+  const providedHeader = getHeader(req, "x-cron-secret");
+  if (githubSecret && providedHeader === githubSecret) {
+    return { ok: true as const };
+  }
+
+  const authorization = getHeader(req, "authorization");
+  if (cronSecret && authorization === `Bearer ${cronSecret}`) {
+    return { ok: true as const };
+  }
+
+  return { ok: false, status: 401, error: "Unauthorized" };
 }
 
 function isAuthorizedSchemaApplyRequest(req: IncomingMessage) {
@@ -2064,13 +2072,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       });
     }
 
-    if (path === "/api/gtd/process" && method === "POST") {
+    if (path === "/api/gtd/process" && (method === "POST" || method === "GET")) {
       const auth = isAuthorizedProcessRequest(req);
       if (!auth.ok) return send(res, auth.status, { error: auth.error });
 
       const sb = getSupabase();
       if (!sb) return send(res, 500, { error: "Supabase not configured" });
-      const force = isForcedProcessRequest(body?.force);
+      const url = new URL(req.url || "", "https://welday-open-brain.vercel.app");
+      const force = isForcedProcessRequest(body?.force) || isForcedProcessRequest(url.searchParams.get("force"));
       const result = await processInbox(sb, force, 20);
       return send(res, 200, result.total > 0
         ? {
