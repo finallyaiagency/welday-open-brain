@@ -11,13 +11,41 @@ const { createClient } = require('@supabase/supabase-js');
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = 'gemini-2.0-flash-lite'; // free tier
+const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview'; // Switch to working model
+
+async function fetchWithTimeout(url, options = {}, timeout = 25000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (err) {
+    clearTimeout(id);
+    if (err.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeout}ms`);
+    }
+    throw err;
+  }
+}
+
+async function withTimeout(promise, timeout, label) {
+  let id;
+  const timeoutPromise = new Promise((_, reject) => {
+    id = setTimeout(() => reject(new Error(`${label} timed out after ${timeout}ms`)), timeout);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (id) clearTimeout(id);
+  }
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 async function callGemini(systemPrompt, userPrompt) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -25,7 +53,7 @@ async function callGemini(systemPrompt, userPrompt) {
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
     }),
-  });
+  }, 30000);
   const data = await response.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
@@ -35,18 +63,18 @@ async function runCEO() {
   console.log('[CEO Agent] Starting analysis…');
 
   try {
-    const { data: ventures } = await supabase
+    const { data: ventures } = await withTimeout(supabase
       .from('ventures')
       .select('*')
-      .order('readiness_score', { ascending: false });
+      .order('readiness_score', { ascending: false }), 5000, "Fetch Ventures");
 
     const yesterday = new Date(Date.now() - 86400000).toISOString();
-    const { data: inbox } = await supabase
+    const { data: inbox } = await withTimeout(supabase
       .from('gtd_inbox')
       .select('raw_text, source, created_at')
       .gte('created_at', yesterday)
       .eq('processed', false)
-      .limit(20);
+      .limit(20), 5000, "Fetch Inbox");
 
     const venturesSummary = ventures.map(v =>
       `- ${v.name} (${v.status}): readiness=${v.readiness_score}%, risk=${v.risk_level}, tags=[${(v.synergy_tags||[]).join(',')}], MRR=$${v.monthly_revenue_usd || 0}`
@@ -107,12 +135,12 @@ Focus on SYNERGIES first — how can 2+ ventures share content, users, or infras
         status: 'new',
       }));
 
-      const { error } = await supabase.from('ceo_recommendations').insert(rows);
+      const { error } = await withTimeout(supabase.from('ceo_recommendations').insert(rows), 5000, "Insert Recommendations");
       if (error) console.error('[CEO Agent] Insert error:', error);
       else console.log(`[CEO Agent] Inserted ${rows.length} recommendations`);
     }
 
-    await supabase.from('agent_logs').insert({
+    await withTimeout(supabase.from('agent_logs').insert({
       agent_name: 'ceo_agent',
       action: 'analyze_portfolio',
       input_summary: `${ventures.length} ventures, ${inbox?.length || 0} inbox items`,
@@ -122,18 +150,20 @@ Focus on SYNERGIES first — how can 2+ ventures share content, users, or infras
       duration_ms: Date.now() - startTime,
       model_used: GEMINI_MODEL,
       success: true,
-    });
+    }), 3000, "Agent Log Insert");
 
   } catch (err) {
     console.error('[CEO Agent] Error:', err);
-    await supabase.from('agent_logs').insert({
+    await withTimeout(supabase.from('agent_logs').insert({
       agent_name: 'ceo_agent',
       action: 'analyze_portfolio',
       success: false,
       error_message: err.message,
       duration_ms: Date.now() - startTime,
-    });
+    }), 3000, "Agent Error Log Insert").catch(() => {});
   }
 }
+
+runCEO();
 
 runCEO();

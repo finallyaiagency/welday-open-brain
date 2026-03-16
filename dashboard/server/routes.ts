@@ -19,7 +19,37 @@ function getSupabase() {
 }
 
 // ─── Gemini chat (free tier) ─────────────────────────────────────────────────
-const GEMINI_MODEL = "gemini-2.0-flash-lite";
+const GEMINI_MODEL = "gemini-3.1-flash-lite-preview";
+
+async function fetchWithTimeout(url: string, options: any = {}, timeout = 25000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (err: any) {
+    clearTimeout(id);
+    if (err.name === "AbortError") {
+      throw new Error(`Request timed out after ${timeout}ms`);
+    }
+    throw err;
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeout: number, label: string): Promise<T> {
+  let id: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    id = setTimeout(() => reject(new Error(`${label} timed out after ${timeout}ms`)), timeout);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (id) clearTimeout(id);
+  }
+}
+
 async function openAIChat(messages: any[], maxTokens = 300) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY not set");
@@ -43,11 +73,11 @@ async function openAIChat(messages: any[], maxTokens = 300) {
   }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
+  }, 25000); // 25s timeout
 
   if (!res.ok) throw new Error(`Gemini: ${await res.text()}`);
   const data = await res.json() as any;
@@ -144,11 +174,11 @@ ${context}`;
 // ─── Send Telegram message ────────────────────────────────────────────────────
 async function tgSend(token: string, chatId: number, text: string) {
   if (!token) return;
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  await fetchWithTimeout(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
-  }).catch(() => {});
+  }, 10000).catch(() => {});
 }
 
 // ─── Telegram message handler (shared logic, role-aware) ─────────────────────
@@ -196,7 +226,9 @@ async function handleTelegramMessage(botName: string, message: any) {
   // ── CEO role: /briefing shows portfolio snapshot ──────────────────────────
   if (role === "ceo" && (text === "/briefing" || text === "/portfolio")) {
     let context = "(no data)";
-    if (supabase) context = await buildContext(supabase);
+    if (supabase) {
+      try { context = await withTimeout(buildContext(supabase), 5000, "Supabase context"); } catch {}
+    }
     const { content } = await openAIChat([
       { role:"system", content: getSystemPrompt("ceo", context) },
       { role:"user",   content: "Give me a brief portfolio status. What demands my attention?" },
@@ -208,7 +240,9 @@ async function handleTelegramMessage(botName: string, message: any) {
   // ── /briefing command for assistant roles ─────────────────────────────────
   if ((text === "/briefing" || text === "/b") && (role === "assistant" || role === "moneypenny")) {
     let context = "(no data)";
-    if (supabase) context = await buildContext(supabase);
+    if (supabase) {
+      try { context = await withTimeout(buildContext(supabase), 5000, "Supabase context"); } catch {}
+    }
     const { content } = await openAIChat([
       { role:"system", content: getSystemPrompt(role, context) },
       { role:"user",   content: "Give me my briefing for today. Top 3 things. Under 100 words." },
@@ -220,7 +254,7 @@ async function handleTelegramMessage(botName: string, message: any) {
   // ── Default: full conversational reply ───────────────────────────────────
   let context = "(Supabase not configured)";
   if (supabase) {
-    try { context = await buildContext(supabase); } catch {}
+    try { context = await withTimeout(buildContext(supabase), 5000, "Supabase context"); } catch {}
   }
 
   const { content: reply } = await openAIChat([
@@ -262,7 +296,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
     const supabase = getSupabase();
     let context = "(no live data)";
-    if (supabase) { try { context = await buildContext(supabase); } catch {} }
+    if (supabase) { try { context = await withTimeout(buildContext(supabase), 5000, "Supabase context"); } catch {} }
 
     const role = persona === "moneypenny" ? "moneypenny" : "assistant";
     const systemPrompt = getSystemPrompt(role, context);
@@ -296,7 +330,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
   app.post("/api/ea/briefing", async (req, res) => {
     const supabase = getSupabase();
     let context = "(no data)";
-    if (supabase) context = await buildContext(supabase);
+    if (supabase) {
+      try { context = await withTimeout(buildContext(supabase), 5000, "Supabase context"); } catch {}
+    }
     try {
       const { content } = await openAIChat([
         { role:"system", content: getSystemPrompt("assistant", context) },

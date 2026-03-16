@@ -1,6 +1,43 @@
 import type { IncomingMessage, ServerResponse } from "http";
 
-const GEMINI_MODEL = "gemini-2.0-flash-lite";
+const FREE_MODELS = [
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash",
+  "gemini-3.1-flash-lite-preview",
+  "gemma-3-27b-it"
+];
+
+const COOLDOWNS = new Map<string, number>();
+const COOLDOWN_DURATION = 3 * 60 * 60 * 1000; // 3 hours
+
+async function fetchWithTimeout(url: string, options: any = {}, timeout = 25000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (err: any) {
+    clearTimeout(id);
+    if (err.name === "AbortError") {
+      throw new Error(`Request timed out after ${timeout}ms`);
+    }
+    throw err;
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeout: number, label: string): Promise<T> {
+  let id: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    id = setTimeout(() => reject(new Error(`${label} timed out after ${timeout}ms`)), timeout);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (id) clearTimeout(id);
+  }
+}
 
 // ─── Response helper ──────────────────────────────────────────────────────────
 function send(res: ServerResponse, code: number, data: any) {
@@ -33,8 +70,6 @@ function getSupabase() {
 
 // ─── Gemini (with key fallback) ──────────────────────────────────────────────
 function getGeminiKeys(): string[] {
-  // Reads GEMINI_API_KEY, GEMINI_API_KEY_2 ... GEMINI_API_KEY_N automatically
-  // Add as many keys as you want in Vercel env vars — no code change needed
   const keys: string[] = [];
   if (process.env.GEMINI_API_KEY) keys.push(process.env.GEMINI_API_KEY);
   let i = 2;
@@ -47,13 +82,13 @@ function getGeminiKeys(): string[] {
   return keys;
 }
 
-async function callGeminiWithKey(key: string, systemPrompt: string, messages: { role: string; content: string }[], maxTokens: number) {
+async function callGeminiWithKey(key: string, model: string, systemPrompt: string, messages: { role: string; content: string }[], maxTokens: number) {
   const contents = messages.map(m => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
-  const resp = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
+  const resp = await fetchWithTimeout(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -62,7 +97,8 @@ async function callGeminiWithKey(key: string, systemPrompt: string, messages: { 
         systemInstruction: { parts: [{ text: systemPrompt }] },
         generationConfig: { temperature: 0.6, maxOutputTokens: maxTokens },
       }),
-    }
+    },
+    20000 
   );
   if (!resp.ok) {
     const txt = await resp.text();
@@ -74,27 +110,92 @@ async function callGeminiWithKey(key: string, systemPrompt: string, messages: { 
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
-async function gemini(systemPrompt: string, messages: { role: string; content: string }[], maxTokens = 300): Promise<string> {
+async function gemini(systemPrompt: string, messages: { role: string; content: string }[], maxTokens = 300, openRouterKey?: string): Promise<{ reply: string; model: string; keyIndex: number | string }> {
   const keys = getGeminiKeys();
-  if (!keys.length) throw new Error("No GEMINI_API_KEY set");
+  const now = Date.now();
+  const summary: string[] = [];
 
-  let lastErr: any;
-  for (const key of keys) {
-    try {
-      return await callGeminiWithKey(key, systemPrompt, messages, maxTokens);
-    } catch (err: any) {
-      lastErr = err;
-      // Only fall through to next key on quota/rate limit errors
-      if (err.status === 429 || err.status === 403) {
-        console.warn(`[Gemini] Key exhausted (${err.status}), trying next key...`);
-        continue;
+  // --- Pass 1: Try respecting Cooldowns ---
+  if (keys.length > 0) {
+    for (const model of FREE_MODELS) {
+      let attempt = 1;
+      for (const key of keys) {
+        const cacheKey = `${model}:${key}`;
+        const cooldownUntil = COOLDOWNS.get(cacheKey) || 0;
+
+        if (now < cooldownUntil) {
+          summary.push(`${model}@K${attempt}: Cooldown`);
+          attempt++;
+          continue;
+        }
+
+        try {
+          const reply = await callGeminiWithKey(key, model, systemPrompt, messages, maxTokens);
+          COOLDOWNS.delete(cacheKey);
+          return { reply, model, keyIndex: attempt };
+        } catch (err: any) {
+          summary.push(`${model}@K${attempt}: ${err.status || "Err"}`);
+          if (err.status === 429) {
+            COOLDOWNS.set(cacheKey, now + COOLDOWN_DURATION);
+          }
+          attempt++;
+        }
       }
-      // Any other error — throw immediately
-      throw err;
+    }
+
+    // --- Pass 2: Last Resort (Ignore Cooldowns) ---
+    console.log("[Gemini] First pass exhausted. Attempting last resort (ignoring cooldowns)...");
+    for (const model of FREE_MODELS) {
+      let attempt = 1;
+      for (const key of keys) {
+        try {
+          const reply = await callGeminiWithKey(key, model, systemPrompt, messages, maxTokens);
+          COOLDOWNS.delete(`${model}:${key}`); 
+          return { reply, model, keyIndex: attempt };
+        } catch (err: any) {
+          summary.push(`${model}@K${attempt}: ForceFail(${err.status || "Err"})`);
+          attempt++;
+        }
+      }
     }
   }
-  // All keys exhausted
-  const quotaErr = new Error("Daily AI quota reached — I'll be back tomorrow at midnight. You can add more API keys in Vercel settings to extend capacity.") as any;
+
+  // --- Pass 3: OpenRouter Emergency Fallback ---
+  if (openRouterKey?.trim()) {
+    console.log("[Gemini] All Gemini keys exhausted. Trying OpenRouter...");
+    try {
+      const orResp = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${openRouterKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://welday-open-brain.local",
+          "X-Title": "Welday Open Brain"
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.0-flash-001",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...messages.map(m => ({ role: m.role, content: m.content }))
+          ],
+          max_tokens: maxTokens
+        })
+      });
+
+      if (orResp.ok) {
+        const data = await orResp.json() as any;
+        const reply = data.choices?.[0]?.message?.content || "";
+        return { reply, model: "gemini-2.0-flash (via OpenRouter)", keyIndex: "OpenRouter" };
+      } else {
+        const txt = await orResp.text();
+        summary.push(`OpenRouter: ${orResp.status} (${txt.substring(0,50)})`);
+      }
+    } catch (e: any) {
+      summary.push(`OpenRouter: Error (${e.message})`);
+    }
+  }
+
+  const quotaErr = new Error(`All Free models exhausted.\nDebug: ${summary.join(" | ")}`) as any;
   quotaErr.status = 429;
   throw quotaErr;
 }
@@ -133,9 +234,9 @@ function sysPrompt(role: string, ctx: string): string {
   const base = `\n\nCURRENT STATE:\n${ctx}`;
   switch (role) {
     case "ceo":      return `You are Burns — Virtual CEO of Welday Enterprises. Cold, calculating, Mr. Burns personality. Strategy, synergies, revenue. Under 180 words.${base}`;
-    case "moneypenny": return `You are Moneypenny — the Executive Assistant for Welday Enterprises. Sharp, witty, and always two steps ahead. Inspired by the classic but modernized Moneypenny — you keep the operations running with class, intelligence, and a bit of playful banter. Tactical (today/this week). Short punchy replies, professional yet warm, occasional emoji. Under 150 words.${base}`;
-    case "filer":    return `You are Radar — GTD Filer, like Radar O'Reilly from M*A*S*H. Terse, anticipatory. Confirm captures only. Under 80 words.${base}`;
-    default:         return `You are Smithers — Executive Assistant for Welday Enterprises. Efficient, professional, helpful. Focus TODAY and THIS WEEK. One clear answer. Under 150 words. Accept captures.${base}`;
+    case "moneypenny": return `You are Moneypenny — the Executive Assistant for Welday Enterprises. Tactical (today/this week). Short punchy replies, professional yet warm, occasional emoji. Under 150 words.${base}`;
+    case "filer":    return `You are Radar — GTD Filer. Terse, anticipatory. Confirm captures only. Under 80 words.${base}`;
+    default:         return `You are Smithers — Executive Assistant. Efficient, professional. Focus TODAY and THIS WEEK. Under 150 words. Accept captures.${base}`;
   }
 }
 
@@ -147,13 +248,29 @@ const BOTS: Record<string, { token: string; role: string }> = {
   Moneypenny_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_MONEYPENNY || "", role: "moneypenny" },
 };
 
-async function tgSend(token: string, chatId: number, text: string) {
-  if (!token) return;
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
-  }).catch(() => {});
+async function tgSend(botName: string, token: string, chatId: number, text: string) {
+  if (!token) {
+    console.error(`[telegram:${botName}] send skipped: TELEGRAM token missing`);
+    return false;
+  }
+
+  try {
+    const resp = await fetchWithTimeout(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+    }, 10000);
+
+    if (!resp.ok) {
+      console.error(`[telegram:${botName}] send failed ${resp.status}: ${await resp.text()}`);
+      return false;
+    }
+
+    return true;
+  } catch (err: any) {
+    console.error(`[telegram:${botName}] send failed: ${err.message}`);
+    return false;
+  }
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -161,31 +278,23 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   const path = ((req as any).url || "").split("?")[0];
   const method = req.method || "GET";
 
-  // Parse body once
   let body: any = {};
-  if (method === "POST") {
-    body = await parseBody(req);
-  }
+  if (method === "POST") body = await parseBody(req);
 
   try {
-
-    // Health
     if (path === "/api/health") {
       return send(res, 200, { status: "ok", ts: new Date().toISOString(), gemini: !!process.env.GEMINI_API_KEY, supabase: !!process.env.SUPABASE_URL });
     }
 
-    // EA Chat
     if (path === "/api/ea/chat" && method === "POST") {
       const { message, history = [], persona = "smithers" } = body;
       if (!message?.trim()) return send(res, 400, { error: "message required" });
 
       const sb = getSupabase();
       let ctx = "(no live data)";
-      if (sb) { try { ctx = await buildContext(sb); } catch (e: any) { ctx = `(context unavailable: ${e.message})`; } }
+      if (sb) { try { ctx = await withTimeout(buildContext(sb), 5000, "Supabase context"); } catch (e: any) { ctx = `(context unavailable: ${e.message})`; } }
 
       const role = persona === "moneypenny" ? "moneypenny" : "assistant";
-
-      // Capture shorthand
       const cap = message.match(/^(?:add|capture|inbox|remember|note|remind me[:\s]+)(.+)/i);
       if (cap && sb) await sb.from("gtd_inbox").insert({ source: "web", raw_text: cap[1].trim() }).catch(() => {});
 
@@ -194,26 +303,22 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         { role: "user" as const, content: message as string },
       ];
 
-      const reply = await gemini(sysPrompt(role, ctx), msgs, 300);
+      const { reply, model, keyIndex } = await gemini(sysPrompt(role, ctx), msgs, 300);
+      if (sb) sb.from("agent_logs").insert({ agent_name: "ea_dashboard", action: "chat", input_summary: message.substring(0,100), output_summary: reply.substring(0,100), model_used: model, success: true }).catch(() => {});
 
-      if (sb) sb.from("agent_logs").insert({ agent_name: "ea_dashboard", action: "chat", input_summary: message.substring(0,100), output_summary: reply.substring(0,100), model_used: GEMINI_MODEL, success: true }).catch(() => {});
-
-      return send(res, 200, { reply });
+      return send(res, 200, { reply, model, keyIndex });
     }
 
-    // EA Briefing
     if (path === "/api/ea/briefing" && method === "POST") {
       const sb = getSupabase();
       let ctx = "(no data)";
-      if (sb) { try { ctx = await buildContext(sb); } catch {} }
-      const reply = await gemini(sysPrompt("assistant", ctx), [{ role: "user", content: "Morning briefing — top 3 things for today. Under 120 words." }], 350);
+      if (sb) { try { ctx = await withTimeout(buildContext(sb), 5000, "Supabase context"); } catch {} }
+      const { reply } = await gemini(sysPrompt("assistant", ctx), [{ role: "user", content: "Morning briefing — top 3 things for today. Under 120 words." }], 350);
       return send(res, 200, { briefing: reply });
     }
 
-    // Telegram webhooks
-    const tgMatch = path.match(/^\/api\/telegram\/(.+)$/);
-    if (tgMatch && method === "POST") {
-      const botName = tgMatch[1];
+    if (path.match(/^\/api\/telegram\/(.+)$/) && method === "POST") {
+      const botName = path.match(/^\/api\/telegram\/(.+)$/)![1];
       const bot = BOTS[botName];
       if (!bot) return send(res, 404, { error: "unknown bot" });
 
@@ -231,36 +336,63 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         if (role === "filer") {
           if (text === "/status" && sb) {
             const { data } = await sb.from("gtd_inbox").select("id").eq("processed", false);
-            await tgSend(token, chatId, `📋 ${data?.length||0} items waiting. Send /process to file now.`);
+            await tgSend(botName, token, chatId, `📋 ${data?.length||0} items waiting. Send /process to file now.`);
           } else if (text === "/process" || text === "/file") {
-            await tgSend(token, chatId, "📋 Processing your inbox now. Stand by.");
+            await tgSend(botName, token, chatId, "📋 Processing inbox now.");
           } else {
-            await tgSend(token, chatId, `✅ Noted: "${text.substring(0,80)}" — filing next run.`);
+            await tgSend(botName, token, chatId, `✅ Noted: "${text.substring(0,80)}"`);
           }
         } else {
           const sb2 = getSupabase();
           let ctx = "(no data)";
-          if (sb2) { try { ctx = await buildContext(sb2); } catch {} }
-          const userMsg = (text === "/briefing" || text === "/b")
-            ? "Give me my briefing for today. Top 3 things. Under 100 words."
-            : text;
+          if (sb2) { try { ctx = await withTimeout(buildContext(sb2), 5000, "Supabase context"); } catch {} }
+          const userMsg = (text === "/briefing" || text === "/b") ? "Morning briefing — top 3 items." : text;
           try {
-            const reply = await gemini(sysPrompt(role, ctx), [{ role: "user", content: userMsg }], 280);
-            await tgSend(token, chatId, reply);
-          } catch { await tgSend(token, chatId, "Something went wrong — try again."); }
+            const { reply } = await gemini(sysPrompt(role, ctx), [{ role: "user", content: userMsg }], 280);
+            await tgSend(botName, token, chatId, reply);
+          } catch {
+            await tgSend(botName, token, chatId, "Gemini exhaustion. Try again later.");
+          }
         }
       }
       return send(res, 200, { ok: true });
     }
 
-    // Cron stubs
-    if (path === "/api/ceo/run")     return send(res, 200, { message: "CEO agent stub" });
-    if (path === "/api/gtd/process") return send(res, 200, { message: "GTD filer stub" });
+    if (path === "/api/test-models") {
+      const keys = getGeminiKeys();
+      const results: any[] = [];
+      const now = Date.now();
 
-    return send(res, 404, { error: "not found", path });
+      for (const model of FREE_MODELS) {
+        let modelResult = { model, statuses: [] as string[] };
+        for (let i = 0; i < keys.length; i++) {
+          const cacheKey = `${model}:${keys[i]}`;
+          const cooldownUntil = COOLDOWNS.get(cacheKey) || 0;
+          
+          if (now < cooldownUntil) {
+            const mins = Math.ceil((cooldownUntil - now) / 60000);
+            modelResult.statuses.push(`Key ${i+1}: Cooldown (${mins}m)`);
+            continue;
+          }
 
+          try {
+            const response = await fetchWithTimeout(
+              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${keys[i]}`,
+              { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }] }] }) },
+              10000
+            );
+            modelResult.statuses.push(`Key ${i+1}: ${response.status}`);
+          } catch (e: any) {
+            modelResult.statuses.push(`Key ${i+1}: Err`);
+          }
+        }
+        results.push(modelResult);
+      }
+      return send(res, 200, { results });
+    }
+
+    return send(res, 404, { error: "not found" });
   } catch (err: any) {
-    console.error("[api/index] unhandled error:", err);
     return send(res, 500, { error: err.message || "Internal server error" });
   }
 }

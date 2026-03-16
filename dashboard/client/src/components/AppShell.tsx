@@ -3,7 +3,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import { supabase } from "@/lib/supabase";
 import {
   LayoutDashboard, Briefcase, CheckSquare, Brain,
-  Search, Inbox, Settings, Sun, Moon, LogOut, Zap
+  Search, Inbox, Settings, Sun, Moon, LogOut, Zap, Activity
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { href: "/inbox",      label: "Inbox",       icon: Inbox },
   { href: "/search",     label: "Search",      icon: Search },
   { href: "/settings",   label: "Settings",    icon: Settings },
+  { href: "/models",     label: "Model Status", icon: Activity },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

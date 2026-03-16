@@ -13,19 +13,45 @@ const supabase = createClient(
 );
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = 'gemini-2.0-flash-lite';
+const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+
+async function fetchWithTimeout(url, options = {}, timeout = 25000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (err) {
+    clearTimeout(id);
+    if (err.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeout}ms`);
+    }
+    throw err;
+  }
+}
+
+async function withTimeout(promise, timeout, label) {
+  let id;
+  const timeoutPromise = new Promise((_, reject) => {
+    id = setTimeout(() => reject(new Error(`${label} timed out after ${timeout}ms`)), timeout);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (id) clearTimeout(id);
+  }
+}
 
 async function callGemini(systemPrompt, messages, temperature = 0.5, maxTokens = 300) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
 
-  // Convert OpenAI-style messages to Gemini format
-  // Gemini alternates user/model roles; system goes in systemInstruction
   const contents = messages.map(m => ({
     role: m.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: m.content }],
   }));
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -33,7 +59,7 @@ async function callGemini(systemPrompt, messages, temperature = 0.5, maxTokens =
       contents,
       generationConfig: { temperature, maxOutputTokens: maxTokens },
     }),
-  });
+  }, 25000);
 
   const data = await response.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
@@ -45,6 +71,16 @@ async function buildContext() {
   const today = now.toISOString().split('T')[0];
   const in3Days = new Date(now.getTime() + 3 * 86400000).toISOString().split('T')[0];
 
+  const results = await withTimeout(Promise.all([
+    supabase.from('gtd_actions').select('title, context, due_date, venture_id, ventures(name)').eq('status', 'active').lt('due_date', today).order('due_date', { ascending: true }).limit(10),
+    supabase.from('gtd_actions').select('title, context, due_date, energy, ventures(name)').eq('status', 'active').eq('due_date', today).limit(10),
+    supabase.from('gtd_actions').select('title, context, due_date, energy, ventures(name)').eq('status', 'active').gt('due_date', today).lte('due_date', in3Days).order('due_date', { ascending: true }).limit(8),
+    supabase.from('gtd_inbox').select('id, raw_text, created_at').eq('processed', false).order('created_at', { ascending: false }).limit(5),
+    supabase.from('gtd_actions').select('title, delegated_to, due_date').eq('status', 'waiting').limit(5),
+    supabase.from('ventures').select('name, status, readiness_score, risk_level, monthly_revenue_usd').eq('status', 'active').order('readiness_score', { ascending: false }),
+    supabase.from('ceo_recommendations').select('title, type, priority').eq('status', 'new').in('priority', ['critical', 'high']).limit(3),
+  ]), 5000, "Supabase context fetch");
+
   const [
     { data: overdueActions },
     { data: todayActions },
@@ -53,15 +89,7 @@ async function buildContext() {
     { data: waitingItems },
     { data: activeVentures },
     { data: newCeoRecs },
-  ] = await Promise.all([
-    supabase.from('gtd_actions').select('title, context, due_date, venture_id, ventures(name)').eq('status', 'active').lt('due_date', today).order('due_date', { ascending: true }).limit(10),
-    supabase.from('gtd_actions').select('title, context, due_date, energy, ventures(name)').eq('status', 'active').eq('due_date', today).limit(10),
-    supabase.from('gtd_actions').select('title, context, due_date, energy, ventures(name)').eq('status', 'active').gt('due_date', today).lte('due_date', in3Days).order('due_date', { ascending: true }).limit(8),
-    supabase.from('gtd_inbox').select('id, raw_text, created_at').eq('processed', false).order('created_at', { ascending: false }).limit(5),
-    supabase.from('gtd_actions').select('title, delegated_to, due_date').eq('status', 'waiting').limit(5),
-    supabase.from('ventures').select('name, status, readiness_score, risk_level, monthly_revenue_usd').eq('status', 'active').order('readiness_score', { ascending: false }),
-    supabase.from('ceo_recommendations').select('title, type, priority').eq('status', 'new').in('priority', ['critical', 'high']).limit(3),
-  ]);
+  ] = results;
 
   const lines = [];
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
@@ -167,16 +195,19 @@ Respond to the user's message below.`;
 
 // ─── Main chat handler ────────────────────────────────────────────────────────
 async function chat(messages, userMessage) {
-  const context = await buildContext();
+  let context = "(no live data)";
+  try {
+    context = await buildContext();
+  } catch (e) {
+    context = `(context unavailable: ${e.message})`;
+  }
   const systemPrompt = buildSystemPrompt(context);
 
   // Check if the user is capturing something to inbox
   const captureMatch = userMessage.match(/^(?:add|capture|inbox|remember|note|remind me[:\s]+)(.+)/i);
   if (captureMatch) {
     const captured = captureMatch[1].trim();
-    try {
-      await supabase.from('gtd_inbox').insert({ source: 'web', raw_text: captured });
-    } catch {}
+    await withTimeout(supabase.from('gtd_inbox').insert({ source: 'web', raw_text: captured }), 3000, "GTD Inbox Insert").catch(() => {});
   }
 
   // Build history (last 10 turns, Gemini needs alternating user/model)
@@ -190,7 +221,7 @@ async function chat(messages, userMessage) {
 
   const reply = await callGemini(systemPrompt, allMessages, 0.5, 300);
 
-  await supabase.from('agent_logs').insert({
+  await withTimeout(supabase.from('agent_logs').insert({
     agent_name: 'ea_agent',
     action: 'chat',
     input_summary: userMessage.substring(0, 100),
@@ -198,14 +229,19 @@ async function chat(messages, userMessage) {
     tables_read: ['gtd_actions', 'gtd_inbox', 'ventures', 'ceo_recommendations'],
     model_used: GEMINI_MODEL,
     success: true,
-  }).catch(() => {});
+  }), 3000, "Agent Log Insert").catch(() => {});
 
   return reply || 'Something went wrong — try again.';
 }
 
 // ─── Daily briefing ───────────────────────────────────────────────────────────
 async function dailyBriefing() {
-  const context = await buildContext();
+  let context = "(no data)";
+  try {
+    context = await buildContext();
+  } catch (e) {
+    context = `(context unavailable: ${e.message})`;
+  }
   const systemPrompt = buildSystemPrompt(context);
 
   const reply = await callGemini(

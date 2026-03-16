@@ -16,6 +16,7 @@ import { AssistantPage } from "@/pages/AssistantPage";
 import { SearchPage } from "@/pages/SearchPage";
 import { InboxPage } from "@/pages/InboxPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { ModelsPage } from "@/pages/ModelsPage";
 import NotFound from "@/pages/not-found";
 
 function AppRoutes() {
@@ -30,6 +31,7 @@ function AppRoutes() {
         <Route path="/search" component={SearchPage} />
         <Route path="/inbox" component={InboxPage} />
         <Route path="/settings" component={SettingsPage} />
+        <Route path="/models" component={ModelsPage} />
         <Route component={NotFound} />
       </Switch>
     </AppShell>

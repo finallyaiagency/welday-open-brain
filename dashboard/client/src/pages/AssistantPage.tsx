@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import {
-  Send, Zap, Calendar, Inbox, Clock, RefreshCw, Mic
+  Send, Zap, Calendar, Inbox, Clock, RefreshCw, Mic, Key
 } from "lucide-react";
 
 type Message = {
@@ -15,6 +15,8 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   ts: Date;
+  model?: string;
+  keyIndex?: number;
 };
 
 // ─── Quick context strip (pulled directly from Supabase) ─────────────────────
@@ -85,8 +87,15 @@ function Bubble({ msg }: { msg: Message }) {
         {msg.content.split("\n").map((line, i) => (
           <span key={i}>{line}{i < msg.content.split("\n").length - 1 && <br />}</span>
         ))}
-        <div className={`text-[10px] mt-1 ${isUser ? "text-primary-foreground/60" : "text-muted-foreground"}`}>
-          {msg.ts.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+        <div className={`text-[10px] mt-1 flex justify-between items-center ${isUser ? "text-primary-foreground/60" : "text-muted-foreground"}`}>
+          <span>{msg.ts.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</span>
+          {!isUser && msg.model && (
+            <span className="flex items-center gap-1.5 ml-3 opacity-80 bg-primary/5 px-1.5 py-0.5 rounded border border-primary/10">
+              <span className="font-medium text-[9px] uppercase tracking-wider">{msg.model.replace("gemini-","G-")}</span>
+              <span className="w-px h-2 bg-border" />
+              <span className="font-semibold">{typeof msg.keyIndex === "string" ? msg.keyIndex : `Key ${msg.keyIndex}`}</span>
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -115,6 +124,8 @@ export function AssistantPage() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [openRouterKey, setOpenRouterKey] = useState("");
+  const [showKeyInput, setShowKeyInput] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -151,10 +162,15 @@ export function AssistantPage() {
           message: userText,
           history,
           persona,
+          openRouterKey: openRouterKey.trim() || undefined,
         }),
       });
 
       const data = await res.json();
+      
+      if (!res.ok && res.status === 429) {
+        setShowKeyInput(true);
+      }
       const reply = data.reply || data.error || "Sorry, something went wrong.";
 
       setMessages(prev => [...prev, {
@@ -162,6 +178,8 @@ export function AssistantPage() {
         role: "assistant",
         content: reply,
         ts: new Date(),
+        model: data.model,
+        keyIndex: data.keyIndex,
       }]);
     } catch {
       setMessages(prev => [...prev, {
@@ -297,6 +315,39 @@ export function AssistantPage() {
         <p className="text-[10px] text-muted-foreground mt-1.5 text-center">
           Also available in Telegram — message <strong>@Moneypenny_Welday_Ent_bot</strong> any time
         </p>
+        
+        {/* OpenRouter Fallback UI */}
+        {showKeyInput && (
+          <div className="mt-4 p-3 rounded-lg border border-indigo-500/30 bg-indigo-500/5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <div className="flex items-center gap-2 mb-2">
+              <Key size={14} className="text-indigo-500" />
+              <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wider">All Free models exhausted</p>
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">
+              Gemini free quotas are depleted across all keys. Paste an **OpenRouter API Key** below to continue via the paid fallback.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={openRouterKey}
+                onChange={e => setOpenRouterKey(e.target.value)}
+                placeholder="sk-or-v1-..."
+                className="flex-1 bg-card border border-indigo-500/20 rounded px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500/40 outline-none"
+              />
+              <Button 
+                size="sm" 
+                variant="outline" 
+                className="h-8 border-indigo-500/30 text-indigo-500 hover:bg-indigo-500/10"
+                onClick={() => {
+                  setShowKeyInput(false);
+                  send();
+                }}
+              >
+                Retry
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
