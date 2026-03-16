@@ -51,11 +51,12 @@ async function callGemini(prompt) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 512 },
+      generationConfig: { temperature: 0.3, maxOutputTokens: 1024 },
     }),
   }, 25000);
   const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  return parts.map(p => p.text || "").join("");
 }
 
 async function classifyItem(text) {

@@ -152,7 +152,7 @@ export function InboxPage() {
           <div>
             <p className="text-xs font-medium text-primary">Telegram connected</p>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              Message <strong>@welday007_bot</strong> any thought, idea, or task. It lands here instantly.
+              Message <strong>@Radar_Welday_Ent_bot</strong> any thought, idea, or task. It lands here instantly.
               The GTD filer agent processes this inbox every hour.
             </p>
           </div>

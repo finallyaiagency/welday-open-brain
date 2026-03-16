@@ -55,7 +55,8 @@ async function callGemini(systemPrompt, userPrompt) {
     }),
   }, 30000);
   const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  return parts.map(p => p.text || "").join("");
 }
 
 async function runCEO() {

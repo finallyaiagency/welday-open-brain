@@ -107,7 +107,8 @@ async function callGeminiWithKey(key: string, model: string, systemPrompt: strin
     throw err;
   }
   const data = await resp.json() as any;
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  return parts.map((p: any) => p.text || "").join("");
 }
 
 async function gemini(systemPrompt: string, messages: { role: string; content: string }[], maxTokens = 300, openRouterKey?: string): Promise<{ reply: string; model: string; keyIndex: number | string }> {
@@ -246,6 +247,11 @@ const BOTS: Record<string, { token: string; role: string }> = {
   Smithers_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_SMITHERS || "", role: "assistant" },
   Radar_Welday_Ent_bot:    { token: process.env.TELEGRAM_TOKEN_RADAR    || "", role: "filer" },
   Moneypenny_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_MONEYPENNY || "", role: "moneypenny" },
+  // Short slugs for flexibility
+  burns:      { token: process.env.TELEGRAM_TOKEN_BURNS    || "", role: "ceo" },
+  smithers:   { token: process.env.TELEGRAM_TOKEN_SMITHERS || "", role: "assistant" },
+  radar:      { token: process.env.TELEGRAM_TOKEN_RADAR    || "", role: "filer" },
+  moneypenny: { token: process.env.TELEGRAM_TOKEN_MONEYPENNY || "", role: "moneypenny" },
 };
 
 async function tgSend(botName: string, token: string, chatId: number, text: string) {
@@ -303,7 +309,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         { role: "user" as const, content: message as string },
       ];
 
-      const { reply, model, keyIndex } = await gemini(sysPrompt(role, ctx), msgs, 300);
+      const { reply, model, keyIndex } = await gemini(sysPrompt(role, ctx), msgs, 1024);
       if (sb) sb.from("agent_logs").insert({ agent_name: "ea_dashboard", action: "chat", input_summary: message.substring(0,100), output_summary: reply.substring(0,100), model_used: model, success: true }).catch(() => {});
 
       return send(res, 200, { reply, model, keyIndex });
@@ -313,7 +319,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       const sb = getSupabase();
       let ctx = "(no data)";
       if (sb) { try { ctx = await withTimeout(buildContext(sb), 5000, "Supabase context"); } catch {} }
-      const { reply } = await gemini(sysPrompt("assistant", ctx), [{ role: "user", content: "Morning briefing — top 3 things for today. Under 120 words." }], 350);
+      const { reply } = await gemini(sysPrompt("assistant", ctx), [{ role: "user", content: "Morning briefing — top 3 things for today. Under 120 words." }], 800);
       return send(res, 200, { briefing: reply });
     }
 
@@ -348,7 +354,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           if (sb2) { try { ctx = await withTimeout(buildContext(sb2), 5000, "Supabase context"); } catch {} }
           const userMsg = (text === "/briefing" || text === "/b") ? "Morning briefing — top 3 items." : text;
           try {
-            const { reply } = await gemini(sysPrompt(role, ctx), [{ role: "user", content: userMsg }], 280);
+            const { reply } = await gemini(sysPrompt(role, ctx), [{ role: "user", content: userMsg }], 1024);
             await tgSend(botName, token, chatId, reply);
           } catch {
             await tgSend(botName, token, chatId, "Gemini exhaustion. Try again later.");

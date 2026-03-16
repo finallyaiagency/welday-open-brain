@@ -62,7 +62,8 @@ async function callGemini(systemPrompt, messages, temperature = 0.5, maxTokens =
   }, 25000);
 
   const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  return parts.map(p => p.text || "").join("");
 }
 
 // ─── Context builder ──────────────────────────────────────────────────────────
@@ -219,7 +220,7 @@ async function chat(messages, userMessage) {
   // Add the current user message
   const allMessages = [...history, { role: 'user', content: userMessage }];
 
-  const reply = await callGemini(systemPrompt, allMessages, 0.5, 300);
+  const reply = await callGemini(systemPrompt, allMessages, 0.5, 1024);
 
   await withTimeout(supabase.from('agent_logs').insert({
     agent_name: 'ea_agent',
@@ -248,7 +249,7 @@ async function dailyBriefing() {
     systemPrompt,
     [{ role: 'user', content: 'Give me my morning briefing. What are the 3 most important things for today? Keep it under 120 words.' }],
     0.4,
-    400
+    1024
   );
 
   return reply || 'Unable to generate briefing.';

@@ -7,6 +7,11 @@ const BOTS: Record<string, { token: string; role: string }> = {
   Smithers_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_SMITHERS       || "", role: "assistant" },
   Radar_Welday_Ent_bot:    { token: process.env.TELEGRAM_TOKEN_RADAR          || "", role: "filer" },
   Moneypenny_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_MONEYPENNY    || "", role: "moneypenny" },
+  // Short slugs for flexibility
+  burns:      { token: process.env.TELEGRAM_TOKEN_BURNS          || "", role: "ceo" },
+  smithers:   { token: process.env.TELEGRAM_TOKEN_SMITHERS       || "", role: "assistant" },
+  radar:      { token: process.env.TELEGRAM_TOKEN_RADAR          || "", role: "filer" },
+  moneypenny: { token: process.env.TELEGRAM_TOKEN_MONEYPENNY    || "", role: "moneypenny" },
 };
 
 // ─── Supabase admin client ────────────────────────────────────────────────────
@@ -81,7 +86,9 @@ async function openAIChat(messages: any[], maxTokens = 300) {
 
   if (!res.ok) throw new Error(`Gemini: ${await res.text()}`);
   const data = await res.json() as any;
-  return { content: data.candidates?.[0]?.content?.parts?.[0]?.text || "", tokens: 0 };
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  const content = parts.map((p: any) => p.text || "").join("");
+  return { content, tokens: data.usageMetadata?.totalTokenCount || 0 };
 }
 
 // ─── Live context from Supabase ───────────────────────────────────────────────
@@ -232,7 +239,7 @@ async function handleTelegramMessage(botName: string, message: any) {
     const { content } = await openAIChat([
       { role:"system", content: getSystemPrompt("ceo", context) },
       { role:"user",   content: "Give me a brief portfolio status. What demands my attention?" },
-    ], 300);
+    ], 1024);
     await tgSend(token, chatId, content);
     return;
   }
@@ -246,7 +253,7 @@ async function handleTelegramMessage(botName: string, message: any) {
     const { content } = await openAIChat([
       { role:"system", content: getSystemPrompt(role, context) },
       { role:"user",   content: "Give me my briefing for today. Top 3 things. Under 100 words." },
-    ], 300);
+    ], 1024);
     await tgSend(token, chatId, content);
     return;
   }
@@ -260,7 +267,7 @@ async function handleTelegramMessage(botName: string, message: any) {
   const { content: reply } = await openAIChat([
     { role:"system", content: getSystemPrompt(role, context) },
     { role:"user",   content: text },
-  ], 250);
+  ], 800);
 
   await tgSend(token, chatId, reply);
 
@@ -312,7 +319,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
         { role:"system", content: systemPrompt },
         ...history.slice(-10).map((m:any)=>({ role:m.role, content:m.content })),
         { role:"user", content: message },
-      ], 300);
+      ], 1024);
 
       if (supabase) supabase.from("agent_logs").insert({
         agent_name:"ea_agent_dashboard", action:"chat",
@@ -337,7 +344,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
       const { content } = await openAIChat([
         { role:"system", content: getSystemPrompt("assistant", context) },
         { role:"user",   content: "Morning briefing — top 3 things for today. Under 120 words." },
-      ], 350);
+      ], 800);
       res.json({ briefing: content });
     } catch (err:any) { res.status(500).json({ error: err.message }); }
   });
