@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
+import { createClient } from "@supabase/supabase-js";
 
 const FREE_MODELS = [
   "gemini-3-flash-preview",
@@ -665,11 +666,7 @@ function getSupabase() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { createClient } = require("@supabase/supabase-js");
-    return createClient(url, key);
-  } catch { return null; }
+  return createClient(url, key);
 }
 
 // ─── Gemini (with key fallback) ──────────────────────────────────────────────
@@ -1940,7 +1937,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
       const role = persona === "moneypenny" ? "moneypenny" : "assistant";
       const cap = message.match(/^(?:add|capture|inbox|remember|note|remind me[:\s]+)(.+)/i);
-      if (cap && sb) await sb.from("gtd_inbox").insert({ source: "web", raw_text: cap[1].trim() }).catch(() => {});
+      if (cap && sb) {
+        try {
+          await sb.from("gtd_inbox").insert({ source: "web", raw_text: cap[1].trim() });
+        } catch {}
+      }
 
       const msgs = [
         ...(Array.isArray(history) ? history.slice(-10) : []).map((m: any) => ({ role: m.role as string, content: m.content as string })),

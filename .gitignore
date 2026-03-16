@@ -5,3 +5,4 @@ dashboard/dist/
 .env
 .env.local
 *.env
+.vercel

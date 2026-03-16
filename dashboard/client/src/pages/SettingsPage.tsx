@@ -228,9 +228,9 @@ export function SettingsPage() {
             link={{ text: "Open Supabase dashboard", url: "https://supabase.com/dashboard/project/lqtamdgtbokewphcgwzy" }}
           />
           <SetupItem
-            done={false}
+            done={true}
             label="Run the Google sync migration in Supabase"
-            detail="Apply the migration so `gtd_actions` and `calendar_events` can store Google source and sync timestamps."
+            detail="Applied. `gtd_actions` and `calendar_events` now have the Google sync columns required by this app."
             link={{ text: "Open SQL editor", url: "https://supabase.com/dashboard/project/lqtamdgtbokewphcgwzy/sql/new" }}
           />
           <SetupItem

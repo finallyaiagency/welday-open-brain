@@ -44,8 +44,13 @@ function isSourceConstraintError(error: any) {
   return text.includes("check constraint") || text.includes("source") || text.includes("violates");
 }
 
+function isMissingColumnError(error: any, column: string) {
+  const text = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return text.includes(`column "${column.toLowerCase()}"`) || text.includes(`column ${column.toLowerCase()}`);
+}
+
 async function captureToInbox(supabase: any, payload: { rawText: string; source: string; telegramChatId?: number; telegramMessageId?: number }) {
-  const baseInsert = {
+  const baseInsert: Record<string, any> = {
     raw_text: payload.rawText,
     source: payload.source,
     tags: extractHashtags(payload.rawText),
@@ -53,7 +58,13 @@ async function captureToInbox(supabase: any, payload: { rawText: string; source:
     telegram_message_id: payload.telegramMessageId,
   };
 
-  const preferred = await supabase.from("gtd_inbox").insert(baseInsert);
+  let insertPayload = { ...baseInsert };
+  let preferred = await supabase.from("gtd_inbox").insert(insertPayload);
+  if (preferred.error && isMissingColumnError(preferred.error, "tags")) {
+    const { tags: _tags, ...withoutTags } = insertPayload;
+    insertPayload = withoutTags;
+    preferred = await supabase.from("gtd_inbox").insert(insertPayload);
+  }
   if (!preferred.error) return { storedSource: payload.source };
 
   if (!isSourceConstraintError(preferred.error) || payload.source === "telegram") {
@@ -61,7 +72,7 @@ async function captureToInbox(supabase: any, payload: { rawText: string; source:
   }
 
   const fallback = await supabase.from("gtd_inbox").insert({
-    ...baseInsert,
+    ...insertPayload,
     source: "telegram",
   });
   if (fallback.error) throw fallback.error;

@@ -102,10 +102,23 @@ update calendar_events
 set source = 'manual'
 where source is null;
 
-create unique index if not exists idx_gtd_actions_google_task_id_unique
-  on gtd_actions(google_task_id)
-  where google_task_id is not null;
+drop index if exists idx_gtd_actions_google_task_id_unique;
 
-create unique index if not exists idx_calendar_events_google_event_id_unique
-  on calendar_events(google_event_id)
-  where google_event_id is not null;
+drop index if exists idx_calendar_events_google_event_id_unique;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'gtd_actions_google_task_id_key'
+  ) then
+    alter table gtd_actions
+      add constraint gtd_actions_google_task_id_key unique (google_task_id);
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'calendar_events_google_event_id_key'
+  ) then
+    alter table calendar_events
+      add constraint calendar_events_google_event_id_key unique (google_event_id);
+  end if;
+end $$;
