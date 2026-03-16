@@ -32,8 +32,8 @@ const authStorage = getBrowserStorage();
 export const GOOGLE_WORKSPACE_SYNC_ENABLED = googleWorkspaceSyncFlag.toLowerCase() === "true";
 
 export const supabase = createClient(
-  supabaseUrl || "https://placeholder.supabase.co",
-  supabaseAnonKey || "placeholder",
+  supabaseUrl,
+  supabaseAnonKey,
   {
     auth: {
       storage: authStorage as any,
