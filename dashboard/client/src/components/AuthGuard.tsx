@@ -42,7 +42,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
         <Button
           data-testid="button-google-signin"
-          onClick={() => signInWithGoogle({ includeGoogleWorkspace: true })}
+          onClick={() => signInWithGoogle()}
           className="gap-2 px-6"
           size="lg"
         >
@@ -56,7 +56,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         </Button>
 
         <p className="text-xs text-muted-foreground">
-          Restricted to authorized Welday accounts
+          Sign in first. Connect Google Calendar and Tasks later from Settings.
         </p>
       </div>
     );
