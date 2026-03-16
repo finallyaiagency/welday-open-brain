@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AppShell } from "@/components/AppShell";
 import { AuthGuard } from "@/components/AuthGuard";
+import { GoogleSyncController } from "@/components/GoogleSyncController";
 
 // Pages
 import { OverviewPage } from "@/pages/OverviewPage";
@@ -15,6 +16,7 @@ import { CEOPage } from "@/pages/CEOPage";
 import { AssistantPage } from "@/pages/AssistantPage";
 import { SearchPage } from "@/pages/SearchPage";
 import { InboxPage } from "@/pages/InboxPage";
+import { ReviewPage } from "@/pages/ReviewPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { ModelsPage } from "@/pages/ModelsPage";
 import NotFound from "@/pages/not-found";
@@ -30,6 +32,7 @@ function AppRoutes() {
         <Route path="/gtd" component={GTDPage} />
         <Route path="/search" component={SearchPage} />
         <Route path="/inbox" component={InboxPage} />
+        <Route path="/review" component={ReviewPage} />
         <Route path="/settings" component={SettingsPage} />
         <Route path="/models" component={ModelsPage} />
         <Route component={NotFound} />
@@ -44,6 +47,7 @@ export default function App() {
       <ThemeProvider>
         <Router hook={useHashLocation}>
           <AuthGuard>
+            <GoogleSyncController />
             <AppRoutes />
           </AuthGuard>
         </Router>

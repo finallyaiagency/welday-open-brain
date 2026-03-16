@@ -1,9 +1,11 @@
 import { Link, useLocation } from "wouter";
 import { useTheme } from "@/components/ThemeProvider";
-import { supabase } from "@/lib/supabase";
+import { signOut } from "@/lib/supabase";
+import { useQuery } from "@tanstack/react-query";
+import { fetchSchemaReviewCount } from "@/lib/supabaseQueries";
 import {
   LayoutDashboard, Briefcase, CheckSquare, Brain,
-  Search, Inbox, Settings, Sun, Moon, LogOut, Zap, Activity
+  Search, Inbox, Settings, Sun, Moon, LogOut, Zap, Activity, ShieldCheck
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -13,6 +15,7 @@ const NAV_ITEMS = [
   { href: "/ceo",        label: "Virtual CEO", icon: Brain },
   { href: "/gtd",        label: "GTD",         icon: CheckSquare },
   { href: "/inbox",      label: "Inbox",       icon: Inbox },
+  { href: "/review",     label: "Review",      icon: ShieldCheck },
   { href: "/search",     label: "Search",      icon: Search },
   { href: "/settings",   label: "Settings",    icon: Settings },
   { href: "/models",     label: "Model Status", icon: Activity },
@@ -21,6 +24,11 @@ const NAV_ITEMS = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { theme, toggle } = useTheme();
+  const { data: pendingReviewCount = 0 } = useQuery({
+    queryKey: ["/api/schema-reviews", "count", "proposed"],
+    queryFn: () => fetchSchemaReviewCount("proposed"),
+    refetchInterval: 30_000,
+  });
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -47,6 +55,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 overflow-y-auto py-3 px-2">
           {NAV_ITEMS.map(({ href, label, icon: Icon, highlight }) => {
             const active = location === href;
+            const showReviewBadge = href === "/review" && pendingReviewCount > 0;
             return (
               <Link key={href} href={href}>
                 <a
@@ -61,6 +70,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 >
                   <Icon size={15} />
                   {label}
+                  {showReviewBadge && (
+                    <span className="ml-auto min-w-5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">
+                      {pendingReviewCount}
+                    </span>
+                  )}
                   {highlight && !active && (
                     <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary opacity-70" />
                   )}
@@ -80,7 +94,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
           </button>
           <button
-            onClick={() => supabase.auth.signOut()}
+            onClick={() => signOut()}
             title="Sign out"
             className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
           >

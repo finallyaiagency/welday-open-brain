@@ -20,8 +20,10 @@ create extension if not exists "uuid-ossp";
 create table if not exists gtd_inbox (
   id            uuid primary key default uuid_generate_v4(),
   source        text not null default 'telegram'  -- 'telegram' | 'telegram_smithers' | 'telegram_moneypenny' | 'telegram_burns' | 'web' | 'api' | 'ceo_agent'
-                check (source in ('telegram','telegram_smithers','telegram_moneypenny','telegram_burns','web','api','ceo_agent','email')),
+              check (source in ('telegram','telegram_smithers','telegram_moneypenny','telegram_burns','web','api','ceo_agent','email')),
   raw_text      text not null,
+  life_domain   text not null default 'unknown'
+              check (life_domain in ('business','personal','unknown')),
   telegram_message_id bigint,
   telegram_chat_id    bigint,
   processed     boolean default false,
@@ -44,9 +46,11 @@ create table if not exists gtd_projects (
   outcome       text,                             -- "what does done look like?"
   why           text,                             -- the motivating reason (GTD: purpose)
   status        text not null default 'active'
-                check (status in ('active','someday','waiting','completed','cancelled')),
+              check (status in ('active','someday','waiting','completed','cancelled')),
   venture_id    uuid references ventures(id),     -- null = personal project
   area          text,                             -- 'work' | 'personal' | 'health' | 'finance' | 'learning'
+  life_domain   text not null default 'unknown'
+              check (life_domain in ('business','personal','unknown')),
   energy        text default 'medium'
                 check (energy in ('high','medium','low')),
   due_date      date,
@@ -69,6 +73,10 @@ create table if not exists gtd_actions (
   project_id    uuid references gtd_projects(id),
   venture_id    uuid references ventures(id),
   context       text,                             -- '@phone' | '@computer' | '@errands' | '@waiting'
+  life_domain   text not null default 'unknown'
+              check (life_domain in ('business','personal','unknown')),
+  source        text not null default 'manual'
+              check (source in ('manual','google','telegram','telegram_smithers','telegram_moneypenny','telegram_burns','dashboard_chat','web','api','ceo_agent','email','system')),
   status        text not null default 'active'
                 check (status in ('active','waiting','completed','cancelled','delegated')),
   delegated_to  text,                             -- name/email if delegated
@@ -78,7 +86,9 @@ create table if not exists gtd_actions (
   due_date      date,
   completed_at  timestamptz,
   google_task_id text,                            -- Google Tasks sync ID
+  google_task_list_id text,
   google_calendar_event_id text,
+  last_synced_at  timestamptz,
   notes         text,
   tags          text[],
   created_at    timestamptz default now(),
@@ -185,6 +195,10 @@ create table if not exists calendar_events (
   gtd_action_id       uuid references gtd_actions(id),
   event_type          text default 'personal'
                       check (event_type in ('personal','work','travel','health','finance','review')),
+  life_domain         text not null default 'unknown'
+                      check (life_domain in ('business','personal','unknown')),
+  source              text not null default 'manual'
+                      check (source in ('manual','google','telegram','telegram_smithers','telegram_moneypenny','telegram_burns','dashboard_chat','web','api','ceo_agent','email','system')),
   status              text default 'confirmed'
                       check (status in ('confirmed','tentative','cancelled')),
   recurrence_rule     text,
@@ -300,6 +314,8 @@ create table if not exists business_memory (
   source        text not null,
   agent_name    text not null,
   summary       text not null,
+  life_domain   text not null default 'unknown'
+              check (life_domain in ('business','personal','unknown')),
   venture_slugs text[],
   topics        text[],
   importance    text default 'medium'
@@ -313,19 +329,25 @@ create table if not exists business_memory (
 -- ============================================================
 
 create index idx_gtd_inbox_processed on gtd_inbox(processed, created_at desc);
+create index idx_gtd_inbox_life_domain on gtd_inbox(life_domain, created_at desc);
 
 create index idx_gtd_actions_status on gtd_actions(status, due_date);
+create unique index idx_gtd_actions_google_task_id_unique on gtd_actions(google_task_id) where google_task_id is not null;
+create index idx_gtd_actions_life_domain on gtd_actions(life_domain, status, due_date);
 
 create index idx_gtd_projects_status on gtd_projects(status, venture_id);
+create index idx_gtd_projects_life_domain on gtd_projects(life_domain, status, due_date);
 
 create index idx_ceo_recommendations_status on ceo_recommendations(status, priority);
 
 create index idx_calendar_events_start on calendar_events(start_at, end_at);
+create index idx_calendar_events_life_domain on calendar_events(life_domain, start_at);
 
 create index idx_venture_snapshots_date on venture_health_snapshots(venture_id, snapshot_date desc);
 
 create index idx_agent_logs_created on agent_logs(agent_name, created_at desc);
 create index idx_business_memory_created on business_memory(agent_name, created_at desc);
+create index idx_business_memory_life_domain on business_memory(life_domain, created_at desc);
 
 -- Full-text search indexes
 create index idx_gtd_inbox_fts on gtd_inbox using gin(to_tsvector('english', raw_text));
@@ -403,6 +425,7 @@ create policy "auth read financial_entries"        on financial_entries        f
 create policy "auth read saved_dashboards"         on saved_dashboards         for select to authenticated using (true);
 create policy "auth read schema_changelog"         on schema_changelog         for select to authenticated using (true);
 create policy "auth read agent_logs"               on agent_logs               for select to authenticated using (true);
+create policy "auth read business_memory"          on business_memory          for select to authenticated using (true);
 
 create policy "auth write venture_health_snapshots" on venture_health_snapshots for insert to authenticated with check (true);
 create policy "auth write calendar_events"          on calendar_events          for insert to authenticated with check (true);
@@ -425,3 +448,4 @@ create policy "service role all gtd_someday"        on gtd_someday              
 create policy "service role all gtd_reference"      on gtd_reference            for all to service_role using (true);
 create policy "service role all ceo_recommendations" on ceo_recommendations     for all to service_role using (true);
 create policy "service role all agent_logs"         on agent_logs               for all to service_role using (true);
+create policy "service role all business_memory"    on business_memory          for all to service_role using (true);

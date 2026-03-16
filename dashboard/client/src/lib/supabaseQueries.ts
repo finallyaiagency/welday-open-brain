@@ -1,5 +1,6 @@
-import { supabase } from "./supabase";
-import type { Venture, GtdInbox, GtdAction, GtdProject, CeoRecommendation, AgentLog } from "@shared/schema";
+import { getSession, supabase } from "./supabase";
+import type { Venture, GtdInbox, GtdAction, GtdProject, CeoRecommendation, AgentLog, BusinessMemory, SchemaChangelog } from "@shared/schema";
+import { contextToHashtag, extractHashtags, mergeHashtags, normalizeHashtag } from "@shared/hashtags";
 
 type RawVenture = {
   id: string;
@@ -28,13 +29,17 @@ type RawInbox = {
   id: string;
   source: string;
   raw_text: string;
+  project_id?: string | null;
+  life_domain?: string | null;
   processed: boolean | null;
   processed_at: string | null;
   filed_to: string | null;
   ai_summary: string | null;
   ai_category: string | null;
   ai_confidence: string | number | null;
+  tags?: string[] | null;
   created_at: string | null;
+  gtd_projects?: { id: string; title: string } | null;
 };
 
 type RawAction = {
@@ -43,6 +48,8 @@ type RawAction = {
   project_id: string | null;
   venture_id: string | null;
   context: string | null;
+  life_domain?: string | null;
+  source?: string | null;
   status: string;
   delegated_to: string | null;
   energy: string | null;
@@ -50,7 +57,9 @@ type RawAction = {
   due_date: string | null;
   completed_at: string | null;
   google_task_id: string | null;
+  google_task_list_id?: string | null;
   notes: string | null;
+  last_synced_at?: string | null;
   tags: string[] | null;
   created_at: string | null;
   updated_at: string | null;
@@ -66,6 +75,7 @@ type RawProject = {
   status: string;
   venture_id: string | null;
   area: string | null;
+  life_domain?: string | null;
   energy: string | null;
   due_date: string | null;
   completed_at: string | null;
@@ -106,6 +116,58 @@ type RawAgentLog = {
   created_at: string | null;
 };
 
+type RawBusinessMemory = {
+  id: string;
+  source: string;
+  agent_name: string;
+  summary: string;
+  life_domain?: string | null;
+  venture_slugs: string[] | null;
+  topics: string[] | null;
+  importance: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string | null;
+};
+
+type RawSchemaReview = {
+  id: string;
+  proposed_by: string;
+  change_type: string;
+  table_name: string;
+  column_name: string | null;
+  description: string;
+  sql_statement: string | null;
+  status: string | null;
+  rationale: string | null;
+  approved_by: string | null;
+  applied_at: string | null;
+  created_at: string | null;
+};
+
+type RawCalendarEvent = {
+  id: string;
+  title: string;
+  description: string | null;
+  start_at: string;
+  end_at: string | null;
+  all_day: boolean | null;
+  event_type: string | null;
+  life_domain?: string | null;
+  status: string | null;
+  location: string | null;
+  source?: string | null;
+};
+
+function normalizeLifeDomain(value: string | null | undefined, fallback?: { ventureId?: string | null; area?: string | null; eventType?: string | null; ventureSlugs?: string[] | null }) {
+  if (value === "business" || value === "personal" || value === "unknown") return value;
+  if (fallback?.ventureId) return "business";
+  if (fallback?.area === "personal") return "personal";
+  if (fallback?.eventType === "personal") return "personal";
+  if (fallback?.eventType === "work") return "business";
+  if ((fallback?.ventureSlugs?.length || 0) > 0) return "business";
+  return "unknown";
+}
+
 function mapVenture(row: RawVenture): Venture {
   return {
     id: row.id,
@@ -136,14 +198,18 @@ function mapInbox(row: RawInbox): GtdInbox {
     id: row.id,
     source: row.source,
     rawText: row.raw_text,
+    projectId: row.project_id || null,
+    lifeDomain: normalizeLifeDomain(row.life_domain),
     processed: row.processed,
     processedAt: row.processed_at as any,
     filedTo: row.filed_to,
     aiSummary: row.ai_summary,
     aiCategory: row.ai_category,
     aiConfidence: row.ai_confidence as any,
+    tags: mergeHashtags(row.tags, extractHashtags(row.raw_text)),
+    gtd_projects: row.gtd_projects ?? null,
     createdAt: row.created_at as any,
-  };
+  } as GtdInbox;
 }
 
 function mapAction(row: RawAction): GtdAction & { gtd_projects?: { title: string } | null; ventures?: { name: string; slug: string } | null } {
@@ -153,6 +219,8 @@ function mapAction(row: RawAction): GtdAction & { gtd_projects?: { title: string
     projectId: row.project_id,
     ventureId: row.venture_id,
     context: row.context,
+    lifeDomain: normalizeLifeDomain(row.life_domain, { ventureId: row.venture_id }),
+    source: row.source || "manual",
     status: row.status,
     delegatedTo: row.delegated_to,
     energy: row.energy,
@@ -160,12 +228,29 @@ function mapAction(row: RawAction): GtdAction & { gtd_projects?: { title: string
     dueDate: row.due_date,
     completedAt: row.completed_at as any,
     googleTaskId: row.google_task_id,
+    googleTaskListId: row.google_task_list_id || null,
     notes: row.notes,
-    tags: row.tags,
+    lastSyncedAt: row.last_synced_at as any,
+    tags: mergeHashtags(row.tags, [contextToHashtag(row.context)]),
     createdAt: row.created_at as any,
     updatedAt: row.updated_at as any,
     gtd_projects: row.gtd_projects ?? null,
     ventures: row.ventures ?? null,
+  };
+}
+
+function mapBusinessMemory(row: RawBusinessMemory): BusinessMemory {
+  return {
+    id: row.id,
+    source: row.source,
+    agentName: row.agent_name,
+    summary: row.summary,
+    lifeDomain: normalizeLifeDomain(row.life_domain, { ventureSlugs: row.venture_slugs }),
+    ventureSlugs: row.venture_slugs,
+    topics: row.topics,
+    importance: row.importance,
+    metadata: row.metadata as any,
+    createdAt: row.created_at as any,
   };
 }
 
@@ -178,6 +263,7 @@ function mapProject(row: RawProject): GtdProject & { ventures?: { name: string; 
     status: row.status,
     ventureId: row.venture_id,
     area: row.area,
+    lifeDomain: normalizeLifeDomain(row.life_domain, { ventureId: row.venture_id, area: row.area }),
     energy: row.energy,
     dueDate: row.due_date,
     completedAt: row.completed_at as any,
@@ -186,6 +272,23 @@ function mapProject(row: RawProject): GtdProject & { ventures?: { name: string; 
     createdAt: row.created_at as any,
     updatedAt: row.updated_at as any,
     ventures: row.ventures ?? null,
+  };
+}
+
+function mapSchemaReview(row: RawSchemaReview): SchemaChangelog {
+  return {
+    id: row.id,
+    proposedBy: row.proposed_by,
+    changeType: row.change_type,
+    tableName: row.table_name,
+    columnName: row.column_name,
+    description: row.description,
+    sqlStatement: row.sql_statement,
+    status: row.status,
+    rationale: row.rationale,
+    approvedBy: row.approved_by,
+    appliedAt: row.applied_at as any,
+    createdAt: row.created_at as any,
   };
 }
 
@@ -252,7 +355,7 @@ function mergeUniqueById<T extends { id: string }>(...groups: T[][]): T[] {
       if (!seen.has(item.id)) seen.set(item.id, item);
     }
   }
-  return [...seen.values()];
+  return Array.from(seen.values());
 }
 
 export async function fetchVentures(): Promise<Venture[]> {
@@ -272,7 +375,7 @@ export async function updateVenture(id: string, patch: Partial<Venture>) {
 export async function fetchInbox(limit = 50): Promise<GtdInbox[]> {
   const { data, error } = await supabase
     .from("gtd_inbox")
-    .select("*")
+    .select("*, gtd_projects(id, title)")
     .eq("processed", false)
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -283,7 +386,7 @@ export async function fetchInbox(limit = 50): Promise<GtdInbox[]> {
 export async function fetchInboxHistory(limit = 100): Promise<GtdInbox[]> {
   const { data, error } = await supabase
     .from("gtd_inbox")
-    .select("*")
+    .select("*, gtd_projects(id, title)")
     .eq("processed", true)
     .order("processed_at", { ascending: false, nullsFirst: false })
     .limit(limit);
@@ -294,7 +397,7 @@ export async function fetchInboxHistory(limit = 100): Promise<GtdInbox[]> {
 export async function addToInbox(rawText: string, source = "web") {
   const { error } = await supabase
     .from("gtd_inbox")
-    .insert({ raw_text: rawText, source });
+    .insert({ raw_text: rawText, source, life_domain: "unknown", tags: extractHashtags(rawText) });
   if (error) throw error;
 }
 
@@ -335,10 +438,24 @@ export async function undoInboxProcessing(id: string) {
   if (error) throw error;
 }
 
-export async function updateInboxText(id: string, rawText: string, reopen = false) {
+export async function updateInboxText(
+  id: string,
+  rawText: string,
+  reopen = false,
+  filedTo?: string | null,
+  projectId?: string | null,
+  existingTags?: string[] | null,
+) {
   const patch: Record<string, unknown> = {
     raw_text: rawText,
+    tags: mergeHashtags(existingTags, extractHashtags(rawText)),
   };
+
+  if (filedTo !== undefined) {
+    patch.filed_to = filedTo;
+    patch.processed = filedTo !== null;
+    patch.processed_at = filedTo !== null ? new Date().toISOString() : null;
+  }
 
   if (reopen) {
     patch.processed = false;
@@ -346,7 +463,12 @@ export async function updateInboxText(id: string, rawText: string, reopen = fals
     patch.filed_to = null;
     patch.ai_summary = null;
     patch.ai_category = null;
+    patch.life_domain = "unknown";
     patch.ai_confidence = null;
+  }
+
+  if (projectId !== undefined) {
+    patch.project_id = projectId;
   }
 
   const { error } = await supabase
@@ -354,6 +476,16 @@ export async function updateInboxText(id: string, rawText: string, reopen = fals
     .update(patch)
     .eq("id", id);
   if (error) throw error;
+}
+
+export async function fetchBusinessMemory(limit = 50): Promise<BusinessMemory[]> {
+  const { data, error } = await supabase
+    .from("business_memory")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return ((data as RawBusinessMemory[] | null) || []).map(mapBusinessMemory);
 }
 
 export async function fetchActions(status = "active"): Promise<GtdAction[]> {
@@ -384,6 +516,29 @@ export async function fetchProjects(status = "active"): Promise<GtdProject[]> {
   return ((data as RawProject[] | null) || []).map(mapProject);
 }
 
+export async function createProject(input: {
+  title: string;
+  lifeDomain?: string | null;
+  area?: string | null;
+  ventureId?: string | null;
+  tags?: string[] | null;
+}) {
+  const { data, error } = await supabase
+    .from("gtd_projects")
+    .insert({
+      title: input.title.trim(),
+      life_domain: normalizeLifeDomain(input.lifeDomain),
+      area: input.area || null,
+      venture_id: input.ventureId || null,
+      tags: mergeHashtags(input.tags, extractHashtags(input.title)),
+    })
+    .select("id, title")
+    .single();
+
+  if (error) throw error;
+  return data as { id: string; title: string };
+}
+
 export async function fetchCeoRecs(status = "new"): Promise<CeoRecommendation[]> {
   const { data, error } = await supabase
     .from("ceo_recommendations")
@@ -412,6 +567,47 @@ export async function fetchRecentLogs(limit = 20): Promise<AgentLog[]> {
   return ((data as RawAgentLog[] | null) || []).map(mapAgentLog);
 }
 
+export async function fetchSchemaReviewQueue(status = "proposed", limit = 100): Promise<SchemaChangelog[]> {
+  const { data, error } = await supabase
+    .from("schema_changelog")
+    .select("*")
+    .eq("status", status)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return ((data as RawSchemaReview[] | null) || []).map(mapSchemaReview);
+}
+
+export async function fetchSchemaReviewCount(status = "proposed"): Promise<number> {
+  const { count, error } = await supabase
+    .from("schema_changelog")
+    .select("id", { count: "exact", head: true })
+    .eq("status", status);
+  if (error) throw error;
+  return count || 0;
+}
+
+export async function reviewSchemaProposal(id: string, decision: "approve" | "reject") {
+  const session = await getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not authenticated");
+
+  const response = await fetch("/api/schema/review-action", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ id, decision }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || "Schema review request failed");
+  }
+  return payload as { ok: boolean; id: string; status: string };
+}
+
 export async function fetchPortfolioStats() {
   const { data: ventures, error } = await supabase
     .from("ventures")
@@ -429,50 +625,147 @@ export async function fetchPortfolioStats() {
   return { total, active, totalRevenue, totalVisitors, avgReadiness };
 }
 
-export async function searchAll(query: string) {
+export async function searchAll(query: string, scope = "all") {
   const q = query.trim();
-  if (!q) return { ventures: [], actions: [], projects: [], recommendations: [] };
+  if (!q) return { ventures: [], actions: [], projects: [], recommendations: [], conversationLogs: [], inboxItems: [], calendarEvents: [] };
 
   const like = `%${q}%`;
+  const tagQuery = q.startsWith("#") || !/\s/.test(q) ? normalizeHashtag(q) : null;
+  const includeEverything = scope === "all";
+  const includeConversation = includeEverything || scope === "conversation";
+  const includeInbox = includeEverything || scope === "inbox";
+  const includeCalendar = includeEverything || scope === "calendar";
 
-  const [ventureName, ventureDescription, ventureNotes, actions, projects, recTitle, recBody] = await Promise.all([
-    supabase
-      .from("ventures")
-      .select("id, slug, name, status, readiness_score, ceo_notes, synergy_tags")
-      .ilike("name", like)
-      .limit(5),
-    supabase
-      .from("ventures")
-      .select("id, slug, name, status, readiness_score, ceo_notes, synergy_tags")
-      .ilike("description", like)
-      .limit(5),
-    supabase
-      .from("ventures")
-      .select("id, slug, name, status, readiness_score, ceo_notes, synergy_tags")
-      .ilike("ceo_notes", like)
-      .limit(5),
-    supabase
-      .from("gtd_actions")
-      .select("id, title, status, context, due_date")
-      .ilike("title", like)
-      .eq("status", "active")
-      .limit(5),
-    supabase
-      .from("gtd_projects")
-      .select("id, title, status, area, due_date")
-      .ilike("title", like)
-      .limit(5),
-    supabase
-      .from("ceo_recommendations")
-      .select("id, title, type, priority, status")
-      .ilike("title", like)
-      .limit(5),
-    supabase
-      .from("ceo_recommendations")
-      .select("id, title, type, priority, status")
-      .ilike("body", like)
-      .limit(5),
+  const [ventureName, ventureDescription, ventureNotes, actions, actionTags, projects, projectTags, recTitle, recBody, conversationSummary, conversationTopics, inboxText, inboxTags, calendarTitle, calendarDescription] = await Promise.all([
+    includeEverything
+      ? supabase
+          .from("ventures")
+          .select("id, slug, name, status, readiness_score, ceo_notes, synergy_tags")
+          .ilike("name", like)
+          .limit(5)
+      : Promise.resolve({ data: [], error: null }),
+    includeEverything
+      ? supabase
+          .from("ventures")
+          .select("id, slug, name, status, readiness_score, ceo_notes, synergy_tags")
+          .ilike("description", like)
+          .limit(5)
+      : Promise.resolve({ data: [], error: null }),
+    includeEverything
+      ? supabase
+          .from("ventures")
+          .select("id, slug, name, status, readiness_score, ceo_notes, synergy_tags")
+          .ilike("ceo_notes", like)
+          .limit(5)
+      : Promise.resolve({ data: [], error: null }),
+    includeEverything
+      ? supabase
+          .from("gtd_actions")
+          .select("id, title, status, context, due_date, life_domain, source, project_id, tags, gtd_projects(title)")
+          .ilike("title", like)
+          .eq("status", "active")
+          .limit(5)
+      : Promise.resolve({ data: [], error: null }),
+    includeEverything && tagQuery
+      ? supabase
+          .from("gtd_actions")
+          .select("id, title, status, context, due_date, life_domain, source, project_id, tags, gtd_projects(title)")
+          .contains("tags", [tagQuery])
+          .eq("status", "active")
+          .limit(5)
+      : Promise.resolve({ data: [], error: null }),
+    includeEverything
+      ? supabase
+          .from("gtd_projects")
+          .select("id, title, status, area, due_date, life_domain, tags")
+          .ilike("title", like)
+          .limit(5)
+      : Promise.resolve({ data: [], error: null }),
+    includeEverything && tagQuery
+      ? supabase
+          .from("gtd_projects")
+          .select("id, title, status, area, due_date, life_domain, tags")
+          .contains("tags", [tagQuery])
+          .limit(5)
+      : Promise.resolve({ data: [], error: null }),
+    includeEverything
+      ? supabase
+          .from("ceo_recommendations")
+          .select("id, title, type, priority, status")
+          .ilike("title", like)
+          .limit(5)
+      : Promise.resolve({ data: [], error: null }),
+    includeEverything
+      ? supabase
+          .from("ceo_recommendations")
+          .select("id, title, type, priority, status")
+          .ilike("body", like)
+          .limit(5)
+      : Promise.resolve({ data: [], error: null }),
+    includeConversation
+      ? supabase
+          .from("business_memory")
+          .select("id, source, agent_name, summary, importance, life_domain, created_at")
+          .ilike("summary", like)
+          .limit(20)
+      : Promise.resolve({ data: [], error: null }),
+    includeConversation
+      ? supabase
+          .from("business_memory")
+          .select("id, source, agent_name, summary, importance, life_domain, created_at")
+          .contains("topics", [q.toLowerCase()])
+          .limit(20)
+      : Promise.resolve({ data: [], error: null }),
+    includeInbox
+      ? supabase
+          .from("gtd_inbox")
+          .select("id, source, raw_text, life_domain, processed, filed_to, created_at, processed_at, project_id, tags, gtd_projects(title)")
+          .ilike("raw_text", like)
+          .limit(20)
+      : Promise.resolve({ data: [], error: null }),
+    includeInbox && tagQuery
+      ? supabase
+          .from("gtd_inbox")
+          .select("id, source, raw_text, life_domain, processed, filed_to, created_at, processed_at, project_id, tags, gtd_projects(title)")
+          .contains("tags", [tagQuery])
+          .limit(20)
+      : Promise.resolve({ data: [], error: null }),
+    includeCalendar
+      ? supabase
+          .from("calendar_events")
+          .select("id, title, description, start_at, end_at, all_day, event_type, life_domain, status, location, source")
+          .ilike("title", like)
+          .limit(20)
+      : Promise.resolve({ data: [], error: null }),
+    includeCalendar
+      ? supabase
+          .from("calendar_events")
+          .select("id, title, description, start_at, end_at, all_day, event_type, life_domain, status, location, source")
+          .ilike("description", like)
+          .limit(20)
+      : Promise.resolve({ data: [], error: null }),
   ]);
+
+  const queryErrors = [
+    ventureName.error,
+    ventureDescription.error,
+    ventureNotes.error,
+    actions.error,
+    actionTags.error,
+    projects.error,
+    projectTags.error,
+    recTitle.error,
+    recBody.error,
+    conversationSummary.error,
+    conversationTopics.error,
+    inboxText.error,
+    inboxTags.error,
+    calendarTitle.error,
+    calendarDescription.error,
+  ].filter(Boolean);
+  if (queryErrors.length > 0) {
+    throw queryErrors[0];
+  }
 
   return {
     ventures: mergeUniqueById(
@@ -480,8 +773,20 @@ export async function searchAll(query: string) {
       ventureDescription.data || [],
       ventureNotes.data || [],
     ).slice(0, 5),
-    actions: actions.data || [],
-    projects: projects.data || [],
+    actions: mergeUniqueById(actions.data || [], actionTags.data || []).slice(0, 5),
+    projects: mergeUniqueById(projects.data || [], projectTags.data || []).slice(0, 5),
     recommendations: mergeUniqueById(recTitle.data || [], recBody.data || []).slice(0, 5),
+    conversationLogs: mergeUniqueById(
+      (conversationSummary.data as RawBusinessMemory[] | null) || [],
+      (conversationTopics.data as RawBusinessMemory[] | null) || [],
+    ).slice(0, 20),
+    inboxItems: mergeUniqueById(
+      (inboxText.data as RawInbox[] | null) || [],
+      (inboxTags.data as RawInbox[] | null) || [],
+    ).slice(0, 20),
+    calendarEvents: mergeUniqueById(
+      (calendarTitle.data as RawCalendarEvent[] | null) || [],
+      (calendarDescription.data as RawCalendarEvent[] | null) || [],
+    ).slice(0, 20),
   };
 }

@@ -80,7 +80,7 @@ function VentureCard({ venture }: { venture: Venture }) {
           </div>
           <div className="text-center">
             <p className="text-sm font-semibold tabular">
-              {venture.synergy_tags?.length || venture.synergyTags?.length || 0}
+              {venture.synergyTags?.length || 0}
             </p>
             <p className="text-[10px] text-muted-foreground">Synergies</p>
           </div>

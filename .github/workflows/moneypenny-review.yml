@@ -1,0 +1,28 @@
+name: Send Moneypenny Review
+
+on:
+  schedule:
+    - cron: "0 11 * * *"
+    - cron: "0 12 * * *"
+    - cron: "0 21 * * *"
+    - cron: "0 22 * * *"
+  workflow_dispatch:
+    inputs:
+      window:
+        description: "auto, morning, or evening"
+        required: false
+        default: "auto"
+
+jobs:
+  send-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger scheduled Moneypenny review
+        env:
+          WINDOW: ${{ github.event.inputs.window || 'auto' }}
+        run: |
+          curl --fail --show-error --silent \
+            -X POST "https://welday-open-brain.vercel.app/api/moneypenny/review" \
+            -H "x-cron-secret: ${{ secrets.GTD_PROCESS_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"window\":\"${WINDOW}\"}"

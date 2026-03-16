@@ -42,7 +42,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
         <Button
           data-testid="button-google-signin"
-          onClick={() => signInWithGoogle()}
+          onClick={() => signInWithGoogle({ includeGoogleWorkspace: true })}
           className="gap-2 px-6"
           size="lg"
         >
