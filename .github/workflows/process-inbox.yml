@@ -8,11 +8,29 @@ on:
 jobs:
   process:
     runs-on: ubuntu-latest
+    env:
+      GTD_PROCESS_SECRET: ${{ secrets.GTD_PROCESS_SECRET }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
     steps:
       - name: Process inbox items older than 10 minutes
         run: |
-          curl --fail-with-body --show-error --silent \
-            -X POST "https://welday-open-brain.vercel.app/api/gtd/process" \
-            -H "x-cron-secret: ${{ secrets.GTD_PROCESS_SECRET }}" \
-            -H "Content-Type: application/json" \
-            -d "{}"
+          set -euo pipefail
+
+          if [ -n "${GTD_PROCESS_SECRET}" ]; then
+            curl --fail-with-body --show-error --silent \
+              -X POST "https://welday-open-brain.vercel.app/api/gtd/process" \
+              -H "x-cron-secret: ${GTD_PROCESS_SECRET}" \
+              -H "Content-Type: application/json" \
+              -d "{}"
+            exit 0
+          fi
+
+          if [ -n "${CRON_SECRET}" ]; then
+            curl --fail-with-body --show-error --silent \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              "https://welday-open-brain.vercel.app/api/gtd/process"
+            exit 0
+          fi
+
+          echo "::error::Missing GitHub Actions secret. Set GTD_PROCESS_SECRET or CRON_SECRET in finallyaiagency/welday-open-brain."
+          exit 1
