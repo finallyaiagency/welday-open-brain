@@ -1,6 +1,10 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { contextToHashtag, extractHashtags, mergeHashtags } from "../shared/hashtags";
+import { createClient } from "@supabase/supabase-js";
+import pg from "pg";
+const { Pool } = pg;
+
 
 const BOTS: Record<string, { token: string; role: string; slug: string }> = {
   Burns_Welday_Ent_bot: { token: process.env.TELEGRAM_TOKEN_BURNS || "", role: "ceo", slug: "burns" },
@@ -101,7 +105,6 @@ function getSupabase() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
-  const { createClient } = require("@supabase/supabase-js");
   return createClient(url, key);
 }
 
@@ -199,7 +202,6 @@ function getAdminPool() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) return null;
   if (!adminPool) {
-    const { Pool } = require("pg");
     adminPool = new Pool({
       connectionString: databaseUrl,
       ssl: databaseUrl.includes("supabase.co") ? { rejectUnauthorized: false } : undefined,
