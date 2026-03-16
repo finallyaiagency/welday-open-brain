@@ -2,6 +2,9 @@ alter table gtd_actions
   add column if not exists source text not null default 'manual';
 
 alter table gtd_actions
+  add column if not exists life_domain text not null default 'unknown';
+
+alter table gtd_actions
   add column if not exists google_task_list_id text;
 
 alter table gtd_actions
@@ -9,6 +12,14 @@ alter table gtd_actions
 
 do $$
 begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'gtd_actions_life_domain_check'
+  ) then
+    alter table gtd_actions
+      add constraint gtd_actions_life_domain_check
+      check (life_domain in ('business','personal','unknown'));
+  end if;
+
   if not exists (
     select 1 from pg_constraint where conname = 'gtd_actions_source_check'
   ) then
@@ -30,6 +41,24 @@ alter table calendar_events
 alter table calendar_events
   add column if not exists last_synced_at timestamptz;
 
+alter table calendar_events
+  add column if not exists gtd_project_id uuid references gtd_projects(id);
+
+alter table calendar_events
+  add column if not exists gtd_action_id uuid references gtd_actions(id);
+
+alter table calendar_events
+  add column if not exists event_type text default 'personal';
+
+alter table calendar_events
+  add column if not exists life_domain text not null default 'unknown';
+
+alter table calendar_events
+  add column if not exists status text default 'confirmed';
+
+alter table calendar_events
+  add column if not exists recurrence_rule text;
+
 do $$
 begin
   if not exists (
@@ -38,6 +67,30 @@ begin
     alter table calendar_events
       add constraint calendar_events_source_check
       check (source in ('manual','google','telegram','telegram_smithers','telegram_moneypenny','telegram_burns','dashboard_chat','web','api','ceo_agent','email','system'));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'calendar_events_event_type_check'
+  ) then
+    alter table calendar_events
+      add constraint calendar_events_event_type_check
+      check (event_type in ('personal','work','travel','health','finance','review'));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'calendar_events_life_domain_check'
+  ) then
+    alter table calendar_events
+      add constraint calendar_events_life_domain_check
+      check (life_domain in ('business','personal','unknown'));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'calendar_events_status_check'
+  ) then
+    alter table calendar_events
+      add constraint calendar_events_status_check
+      check (status in ('confirmed','tentative','cancelled'));
   end if;
 end $$;
 
