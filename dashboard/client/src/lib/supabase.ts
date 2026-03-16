@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const googleWorkspaceSyncFlag = (import.meta.env.VITE_ENABLE_GOOGLE_WORKSPACE_SYNC as string | undefined) || "false";
 
 const memStore: Record<string, string> = {};
 const inMemoryStorage = {
@@ -27,6 +28,8 @@ function getBrowserStorage() {
 }
 
 const authStorage = getBrowserStorage();
+
+export const GOOGLE_WORKSPACE_SYNC_ENABLED = googleWorkspaceSyncFlag.toLowerCase() === "true";
 
 export const supabase = createClient(
   supabaseUrl || "https://placeholder.supabase.co",
@@ -57,6 +60,10 @@ supabase.auth.onAuthStateChange((_event, session) => {
 });
 
 export async function signInWithGoogle(options?: { includeGoogleWorkspace?: boolean }) {
+  if (options?.includeGoogleWorkspace && !GOOGLE_WORKSPACE_SYNC_ENABLED) {
+    throw new Error("Google Calendar and Tasks connection is temporarily disabled until the Google OAuth app is verified or test-user access is configured.");
+  }
+
   const scopes = [
     "openid",
     "email",

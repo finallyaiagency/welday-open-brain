@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CalendarDays, CheckCircle2, ExternalLink, Link2, ListTodo, RefreshCw } from "lucide-react";
 import { fetchRecentLogs } from "@/lib/supabaseQueries";
-import { getSession, signInWithGoogle } from "@/lib/supabase";
+import { getSession, GOOGLE_WORKSPACE_SYNC_ENABLED, signInWithGoogle } from "@/lib/supabase";
 import { hasGoogleWorkspaceConnection, syncGoogleWorkspace, type GoogleSyncSummary } from "@/lib/googleSync";
 
 function SetupItem({ done, label, detail, link }: {
@@ -47,6 +47,22 @@ function formatSyncTimestamp(value: string | Date | null | undefined) {
   });
 }
 
+function getGoogleWorkspaceMessage(errorMessage?: string | null) {
+  const raw = (errorMessage || "").trim();
+  if (!raw) return null;
+
+  const normalized = raw.toLowerCase();
+  if (
+    normalized.includes("access blocked")
+    || normalized.includes("has not completed the google verification process")
+    || normalized.includes("temporarily disabled until the google oauth app is verified")
+  ) {
+    return "Google Calendar and Tasks are disabled right now because the Supabase Google OAuth app has not passed verification for the requested Calendar/Tasks scopes. Add weldayenterprises@gmail.com as a Google OAuth test user or complete verification, then re-enable workspace sync.";
+  }
+
+  return raw;
+}
+
 export function SettingsPage() {
   const [connected, setConnected] = useState(false);
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
@@ -82,6 +98,13 @@ export function SettingsPage() {
       setLastManualSummary(summary);
     },
   });
+
+  const googleWorkspaceMessage = getGoogleWorkspaceMessage(
+    (connectMutation.error as Error | null)?.message
+      || (syncMutation.error as Error | null)?.message
+      || latestGoogleSync?.errorMessage
+      || null,
+  );
 
   return (
     <div className="max-w-3xl space-y-5 p-6">
@@ -132,19 +155,25 @@ export function SettingsPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={() => connectMutation.mutate()} disabled={connectMutation.isPending}>
+            <Button onClick={() => connectMutation.mutate()} disabled={!GOOGLE_WORKSPACE_SYNC_ENABLED || connectMutation.isPending}>
               {connected ? "Reconnect Google" : "Connect Google Calendar + Tasks"}
             </Button>
             <Button
               variant="outline"
               className="gap-2"
               onClick={() => syncMutation.mutate()}
-              disabled={!connected || syncMutation.isPending}
+              disabled={!GOOGLE_WORKSPACE_SYNC_ENABLED || !connected || syncMutation.isPending}
             >
               <RefreshCw size={14} className={syncMutation.isPending ? "animate-spin" : ""} />
               Sync now
             </Button>
           </div>
+
+          {!GOOGLE_WORKSPACE_SYNC_ENABLED && (
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
+              Google Calendar and Tasks connection is temporarily disabled in this build. The current Supabase Google OAuth app requests sensitive Calendar/Tasks scopes, and Google will block the flow until the OAuth consent screen is in Testing with `weldayenterprises@gmail.com` added as a test user, or the app is fully verified.
+            </div>
+          )}
 
           <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
             <div>
@@ -157,9 +186,9 @@ export function SettingsPage() {
             </div>
           </div>
 
-          {(syncMutation.error || latestGoogleSync?.success === false) && (
+          {(googleWorkspaceMessage || (!GOOGLE_WORKSPACE_SYNC_ENABLED && !connected)) && (
             <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-300">
-              {(syncMutation.error as Error | null)?.message || latestGoogleSync?.errorMessage || "Google sync failed. Reconnect Google and try again."}
+              {googleWorkspaceMessage || "Google Calendar and Tasks are unavailable until the Google OAuth app is configured correctly."}
             </div>
           )}
 
@@ -205,15 +234,21 @@ export function SettingsPage() {
             link={{ text: "Open SQL editor", url: "https://supabase.com/dashboard/project/lqtamdgtbokewphcgwzy/sql/new" }}
           />
           <SetupItem
-            done={false}
+            done={GOOGLE_WORKSPACE_SYNC_ENABLED}
             label="Enable Google OAuth scopes in Supabase"
-            detail="The Google provider needs Calendar and Tasks scopes so Supabase returns a provider token with both permissions."
+            detail={GOOGLE_WORKSPACE_SYNC_ENABLED
+              ? "The Google provider is enabled for Calendar and Tasks scopes."
+              : "Blocked for now. The Google OAuth app must be verified or have weldayenterprises@gmail.com added as a test user before Calendar/Tasks connect can be turned back on."}
             link={{ text: "Supabase auth settings", url: "https://supabase.com/dashboard/project/lqtamdgtbokewphcgwzy/auth/providers" }}
           />
           <SetupItem
             done={connected}
             label="Google Calendar + Tasks connected"
-            detail={connected ? "Google provider token detected. The app can sync mobile changes now." : "Reconnect Google from the card above to grant Calendar and Tasks access."}
+            detail={connected
+              ? "Google provider token detected. The app can sync mobile changes now."
+              : GOOGLE_WORKSPACE_SYNC_ENABLED
+                ? "Reconnect Google from the card above to grant Calendar and Tasks access."
+                : "Connection is intentionally disabled in this build until Google OAuth verification or test-user setup is complete."}
           />
           <SetupItem
             done={true}
