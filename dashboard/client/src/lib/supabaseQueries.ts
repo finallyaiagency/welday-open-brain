@@ -34,6 +34,7 @@ type RawInbox = {
   processed: boolean | null;
   processed_at: string | null;
   filed_to: string | null;
+  filed_item_id?: string | null;
   ai_summary: string | null;
   ai_category: string | null;
   ai_confidence: string | number | null;
@@ -203,6 +204,7 @@ function mapInbox(row: RawInbox): GtdInbox {
     processed: row.processed,
     processedAt: row.processed_at as any,
     filedTo: row.filed_to,
+    filedItemId: row.filed_item_id || null,
     aiSummary: row.ai_summary,
     aiCategory: row.ai_category,
     aiConfidence: row.ai_confidence as any,

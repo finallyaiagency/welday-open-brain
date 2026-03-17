@@ -55,6 +55,7 @@ export const gtdInbox = pgTable("gtd_inbox", {
   processed: boolean("processed").default(false),
   processedAt: timestamp("processed_at"),
   filedTo: text("filed_to"),
+  filedItemId: uuid("filed_item_id"),
   aiSummary: text("ai_summary"),
   aiCategory: text("ai_category"),
   aiConfidence: numeric("ai_confidence"),

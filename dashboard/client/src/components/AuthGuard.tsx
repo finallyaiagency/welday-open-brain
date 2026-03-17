@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { supabase, signInWithGoogle } from "@/lib/supabase";
+import { supabase, signInWithGoogle, signOut } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import type { Session } from "@supabase/supabase-js";
+
+const ALLOWED_EMAIL = "welldayenterprises@gmail.com";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null | "loading">("loading");
@@ -47,6 +49,36 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
             <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">
               Access limited to Welday Enterprises personnel
             </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const userEmail = session.user?.email?.toLowerCase() ?? "";
+  if (userEmail !== ALLOWED_EMAIL) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-6">
+        <div className="max-w-md w-full space-y-8 text-center p-8 rounded-2xl border bg-card border-border shadow-2xl">
+          <div className="space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-destructive/15 flex items-center justify-center mx-auto mb-4">
+              <span className="text-destructive text-2xl">🚫</span>
+            </div>
+            <h1 className="text-2xl font-extrabold tracking-tight">Access Denied</h1>
+            <p className="text-muted-foreground text-sm">
+              You are signed in as <span className="font-semibold text-foreground">{session.user?.email}</span>.
+              This dashboard is restricted to authorized Welday Enterprises accounts only.
+            </p>
+          </div>
+
+          <div className="space-y-4 pt-4">
+            <Button
+              onClick={() => signOut()}
+              variant="destructive"
+              className="w-full h-11 font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
+            >
+              Sign Out &amp; Try a Different Account
+            </Button>
           </div>
         </div>
       </div>

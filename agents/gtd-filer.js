@@ -98,47 +98,53 @@ async function fileItem(inbox, classification) {
     .eq('slug', classification.venture_slug || ''), 5000, "Fetch Ventures");
 
   const ventureId = ventures?.[0]?.id || null;
+  let filedItemId = null;
 
   if (classification.destination === 'action') {
-    await withTimeout(supabase.from('gtd_actions').insert({
+    const { data } = await withTimeout(supabase.from('gtd_actions').insert({
       title: classification.title,
       venture_id: ventureId,
       context: classification.context,
       energy: classification.energy || 'medium',
       notes: inbox.raw_text,
       tags: [classification.category].filter(Boolean),
-    }), 5000, "Insert Action");
+    }).select('id').single(), 5000, "Insert Action");
+    filedItemId = data?.id || null;
   } else if (classification.destination === 'project') {
-    await withTimeout(supabase.from('gtd_projects').insert({
+    const { data } = await withTimeout(supabase.from('gtd_projects').insert({
       title: classification.title,
       venture_id: ventureId,
       area: classification.category,
       notes: inbox.raw_text,
       tags: [classification.category].filter(Boolean),
-    }), 5000, "Insert Project");
+    }).select('id').single(), 5000, "Insert Project");
+    filedItemId = data?.id || null;
   } else if (classification.destination === 'someday') {
-    await withTimeout(supabase.from('gtd_someday').insert({
+    const { data } = await withTimeout(supabase.from('gtd_someday').insert({
       title: classification.title,
       description: inbox.raw_text,
       venture_id: ventureId,
       area: classification.category,
       tags: [classification.category].filter(Boolean),
-    }), 5000, "Insert Someday");
+    }).select('id').single(), 5000, "Insert Someday");
+    filedItemId = data?.id || null;
   } else if (classification.destination === 'reference') {
-    await withTimeout(supabase.from('gtd_reference').insert({
+    const { data } = await withTimeout(supabase.from('gtd_reference').insert({
       title: classification.title,
       content: inbox.raw_text,
       venture_id: ventureId,
       category: 'idea',
       area: classification.category,
       tags: [classification.category].filter(Boolean),
-    }), 5000, "Insert Reference");
+    }).select('id').single(), 5000, "Insert Reference");
+    filedItemId = data?.id || null;
   }
 
   await withTimeout(supabase.from('gtd_inbox').update({
     processed: true,
     processed_at: new Date().toISOString(),
     filed_to: classification.destination,
+    filed_item_id: filedItemId,
     ai_summary: classification.summary,
     ai_category: classification.category,
     ai_confidence: classification.confidence,

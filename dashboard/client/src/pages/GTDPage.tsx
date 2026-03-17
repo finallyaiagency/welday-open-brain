@@ -1,22 +1,24 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { completeAction, createProject, fetchActions, fetchProjects, fetchCalendarEvents, fetchAllHashtags, fetchInbox } from "@/lib/supabaseQueries";
+import { completeAction, createProject, fetchActions, fetchProjects, fetchCalendarEvents, fetchAllHashtags, fetchInbox, fetchInboxHistory, updateInboxText } from "@/lib/supabaseQueries";
 import { supabase } from "@/lib/supabase";
-import { contextToHashtag, extractHashtags, formatHashtag } from "@shared/hashtags";
+import { contextToHashtag, extractHashtags, formatHashtag, mergeHashtags } from "@shared/hashtags";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Check, Plus, Calendar, Clock, FolderPlus, Filter, Hash, LayoutDashboard, List, Kanban, ArrowRight } from "lucide-react";
-import type { GtdAction, GtdProject } from "@shared/schema";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Check, Plus, Calendar, Clock, FolderPlus, Hash, LayoutDashboard, List, Kanban, ArrowRight, Edit2, RotateCcw, ChevronRight, Inbox, History } from "lucide-react";
+import type { GtdAction, GtdProject, GtdInbox } from "@shared/schema";
 import { formatSourceLabel } from "@/lib/sourceLabels";
 import { motion, AnimatePresence } from "framer-motion";
-import { format, isToday, isTomorrow, isSameDay, parseISO, startOfDay, addDays } from "date-fns";
+import { format, isToday, isTomorrow, isSameDay, parseISO, startOfDay, addDays, formatDistanceToNow } from "date-fns";
 
 const LIFE_DOMAIN_OPTIONS = [
   { value: "all", label: "All" },
@@ -24,6 +26,15 @@ const LIFE_DOMAIN_OPTIONS = [
   { value: "personal", label: "Personal" },
   { value: "unknown", label: "Unknown" },
 ];
+
+const FILED_TO_LABELS: Record<string, { label: string; color: string }> = {
+  action:    { label: "Action",    color: "bg-green-500/15 text-green-600 border-green-500/20" },
+  project:   { label: "Project",   color: "bg-blue-500/15 text-blue-600 border-blue-500/20" },
+  someday:   { label: "Someday",   color: "bg-amber-500/15 text-amber-600 border-amber-500/20" },
+  reference: { label: "Reference", color: "bg-purple-500/15 text-purple-600 border-purple-500/20" },
+  trash:     { label: "Trash",     color: "bg-red-500/15 text-red-500 border-red-500/20" },
+  manual:    { label: "Manual",    color: "bg-secondary text-muted-foreground border-transparent" },
+};
 
 function formatLifeDomain(value: string | null | undefined) {
   const next = value || "unknown";
@@ -117,33 +128,217 @@ function CalendarEventRow({ event }: { event: any }) {
   );
 }
 
-function InboxSummary() {
-  const { data: inbox = [], isLoading } = useQuery({
-    queryKey: ["/api/inbox"],
-    queryFn: () => fetchInbox(5),
-    refetchInterval: 30_000,
+// ── Edit / Clarify Dialog ─────────────────────────────────────────────────────
+
+function EditInboxDialog({ item, open, onClose }: { item: GtdInbox | null; open: boolean; onClose: () => void }) {
+  const [text, setText] = useState("");
+  const [tagInput, setTagInput] = useState("");
+  const [extraTags, setExtraTags] = useState<string[]>([]);
+  const [lifeDomain, setLifeDomain] = useState("unknown");
+  const [reopen, setReopen] = useState(false);
+
+  // Reset when dialog opens with a new item
+  const prevItemId = useMemo(() => item?.id, [item]);
+  useMemo(() => {
+    if (item) {
+      setText(item.rawText || "");
+      setExtraTags([]);
+      setTagInput("");
+      setLifeDomain(item.lifeDomain || "unknown");
+      setReopen(false);
+    }
+  }, [item?.id]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (!item) return;
+      const mergedTags = mergeHashtags(item.tags, [...extraTags, ...extractHashtags(text)]);
+      await updateInboxText(item.id, text, reopen, reopen ? null : item.filedTo, item.projectId, mergedTags);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/inbox"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/inbox/history"] });
+      onClose();
+    },
   });
 
-  if (isLoading) return <Skeleton className="h-20 w-full" />;
-  if (inbox.length === 0) return null;
+  function addTag() {
+    const trimmed = tagInput.trim().replace(/^#/, "");
+    if (trimmed && !extraTags.includes(trimmed)) {
+      setExtraTags(prev => [...prev, trimmed]);
+    }
+    setTagInput("");
+  }
+
+  function removeExtraTag(tag: string) {
+    setExtraTags(prev => prev.filter(t => t !== tag));
+  }
+
+  const allTags = mergeHashtags(item?.tags, [...extraTags, ...extractHashtags(text)]) || [];
 
   return (
-    <div className="space-y-1.5 mt-3 pt-3 border-t border-primary/10">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 px-1">Recent Inbox</p>
-      <div className="space-y-1">
-        {inbox.slice(0, 3).map((item) => (
-          <div key={item.id} className="text-[11px] leading-tight p-1.5 rounded bg-muted/20 border border-transparent hover:border-primary/10 transition-colors truncate">
-            <span className="text-primary/40 mr-1">○</span>
-            {item.rawText}
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="text-base">Edit / Clarify Inbox Item</DialogTitle>
+        </DialogHeader>
+
+        {item && (
+          <div className="space-y-4 py-1">
+            {/* Status badge */}
+            {item.processed && item.filedTo && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-widest">Filed as</span>
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${(FILED_TO_LABELS[item.filedTo] || FILED_TO_LABELS.manual).color}`}>
+                  {(FILED_TO_LABELS[item.filedTo] || FILED_TO_LABELS.manual).label}
+                </span>
+                {item.aiCategory && (
+                  <span className="text-[10px] text-muted-foreground">category: <strong>{item.aiCategory}</strong></span>
+                )}
+                {item.aiConfidence != null && (
+                  <span className="text-[10px] text-muted-foreground">confidence: <strong>{Math.round(Number(item.aiConfidence) * 100)}%</strong></span>
+                )}
+              </div>
+            )}
+
+            {/* Raw text */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Raw Text</Label>
+              <Textarea
+                value={text}
+                onChange={e => setText(e.target.value)}
+                rows={3}
+                className="text-sm resize-none"
+                placeholder="Captured text..."
+              />
+            </div>
+
+            {/* Life domain */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Life Domain</Label>
+              <Select value={lifeDomain} onValueChange={setLifeDomain}>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="business" className="text-xs">Business</SelectItem>
+                  <SelectItem value="personal" className="text-xs">Personal</SelectItem>
+                  <SelectItem value="unknown" className="text-xs">Unknown</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Tags */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Tags</Label>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {allTags.map(tag => (
+                  <Badge
+                    key={tag}
+                    variant="secondary"
+                    className="h-5 text-[10px] cursor-pointer hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                    onClick={() => removeExtraTag(tag)}
+                    title="Click to remove"
+                  >
+                    #{tag}
+                  </Badge>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  value={tagInput}
+                  onChange={e => setTagInput(e.target.value)}
+                  placeholder="#add-tag"
+                  className="h-8 text-xs"
+                  onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addTag())}
+                />
+                <Button size="sm" variant="outline" className="h-8 px-3 text-xs" onClick={addTag}>Add</Button>
+              </div>
+            </div>
+
+            {/* Re-process toggle */}
+            {item.processed && (
+              <div
+                onClick={() => setReopen(v => !v)}
+                className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${reopen ? "border-amber-500/30 bg-amber-500/10" : "border-border hover:border-amber-500/20 hover:bg-amber-500/5"}`}
+              >
+                <RotateCcw size={14} className={reopen ? "text-amber-500" : "text-muted-foreground"} />
+                <div>
+                  <p className="text-xs font-semibold">Re-open for reprocessing</p>
+                  <p className="text-[10px] text-muted-foreground">Returns this item to the inbox for the AI to re-file</p>
+                </div>
+                <div className={`ml-auto w-4 h-4 rounded border-2 flex items-center justify-center transition-all ${reopen ? "border-amber-500 bg-amber-500" : "border-border"}`}>
+                  {reopen && <Check size={10} className="text-white" />}
+                </div>
+              </div>
+            )}
           </div>
-        ))}
-        {inbox.length > 3 && (
-          <p className="text-[9px] text-center text-muted-foreground pt-1">+{inbox.length - 3} more in inbox</p>
         )}
+
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+            {reopen ? "Save & Re-open" : "Save Changes"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Inbox History Row ─────────────────────────────────────────────────────────
+
+function InboxHistoryRow({ item, onEdit }: { item: GtdInbox; onEdit: (item: GtdInbox) => void }) {
+  const filed = item.filedTo ? (FILED_TO_LABELS[item.filedTo] || FILED_TO_LABELS.manual) : null;
+  const confidence = item.aiConfidence != null ? Math.round(Number(item.aiConfidence) * 100) : null;
+
+  return (
+    <div className="group flex items-start gap-3 py-2.5 border-b border-border last:border-0">
+      <div className="flex-1 min-w-0">
+        <p className="text-[12px] leading-snug text-foreground/80 line-clamp-2">{item.rawText}</p>
+        {item.aiSummary && (
+          <p className="text-[10px] text-muted-foreground mt-0.5 italic line-clamp-1">{item.aiSummary}</p>
+        )}
+        <div className="flex gap-1.5 mt-1.5 flex-wrap items-center">
+          {filed && (
+            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${filed.color}`}>
+              {filed.label}
+            </span>
+          )}
+          {item.aiCategory && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground font-medium uppercase tracking-tighter">
+              {item.aiCategory}
+            </span>
+          )}
+          {confidence != null && (
+            <span className="text-[9px] text-muted-foreground" title="AI confidence">{confidence}% conf.</span>
+          )}
+          {(item.tags || []).slice(0, 2).map(tag => (
+            <span key={tag} className="text-[9px] text-primary/60">#{tag}</span>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-1 flex-shrink-0">
+        {item.processedAt && (
+          <span className="text-[9px] text-muted-foreground/60 hidden group-hover:block">
+            {formatDistanceToNow(parseISO(item.processedAt as unknown as string), { addSuffix: true })}
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+          onClick={() => onEdit(item)}
+          title="Edit / Clarify"
+        >
+          <Edit2 size={11} />
+        </Button>
       </div>
     </div>
   );
 }
+
+// ── Inbox Panel ───────────────────────────────────────────────────────────────
 
 function QuickCapture() {
   const [text, setText] = useState("");
@@ -182,6 +377,114 @@ function QuickCapture() {
         <Plus size={14} />
       </Button>
     </div>
+  );
+}
+
+function InboxPanel() {
+  const [editItem, setEditItem] = useState<GtdInbox | null>(null);
+
+  const { data: inbox = [], isLoading: inboxLoading } = useQuery({
+    queryKey: ["/api/inbox"],
+    queryFn: () => fetchInbox(20),
+    refetchInterval: 30_000,
+  });
+
+  const { data: history = [], isLoading: historyLoading } = useQuery({
+    queryKey: ["/api/inbox/history"],
+    queryFn: () => fetchInboxHistory(30),
+    refetchInterval: 60_000,
+  });
+
+  return (
+    <>
+      <EditInboxDialog
+        item={editItem}
+        open={!!editItem}
+        onClose={() => setEditItem(null)}
+      />
+      <Card className="border-primary/5 bg-primary/5">
+        <CardHeader className="p-4 pb-2">
+          <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+            <Inbox size={12} /> Inbox
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 pt-2 space-y-3">
+          <QuickCapture />
+
+          <Tabs defaultValue="pending">
+            <TabsList className="h-7 w-full">
+              <TabsTrigger value="pending" className="flex-1 text-[10px] h-5 gap-1">
+                <Inbox size={9} /> Pending
+                {inbox.length > 0 && (
+                  <span className="bg-primary text-primary-foreground rounded-full px-1.5 text-[9px] font-bold">{inbox.length}</span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="history" className="flex-1 text-[10px] h-5 gap-1">
+                <History size={9} /> History
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="pending" className="mt-2 space-y-0">
+              {inboxLoading ? (
+                <Skeleton className="h-20 w-full" />
+              ) : inbox.length === 0 ? (
+                <p className="text-[10px] text-center text-muted-foreground italic py-4">
+                  Inbox clear ✓
+                </p>
+              ) : (
+                <div className="space-y-0">
+                  {inbox.slice(0, 5).map(item => (
+                    <div key={item.id} className="group flex items-start gap-2 py-2 border-b border-border/60 last:border-0">
+                      <span className="text-primary/40 mt-0.5 flex-shrink-0">○</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[11px] leading-tight">{item.rawText}</p>
+                        {(item.tags || []).length > 0 && (
+                          <div className="flex gap-1 mt-0.5 flex-wrap">
+                            {(item.tags || []).slice(0, 3).map(tag => (
+                              <span key={tag} className="text-[9px] text-primary/50">#{tag}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                        onClick={() => setEditItem(item)}
+                        title="Edit"
+                      >
+                        <Edit2 size={9} />
+                      </Button>
+                    </div>
+                  ))}
+                  {inbox.length > 5 && (
+                    <p className="text-[9px] text-center text-muted-foreground pt-1.5">
+                      +{inbox.length - 5} more pending
+                    </p>
+                  )}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="history" className="mt-2 space-y-0">
+              {historyLoading ? (
+                <Skeleton className="h-20 w-full" />
+              ) : history.length === 0 ? (
+                <p className="text-[10px] text-center text-muted-foreground italic py-4">
+                  No processed items yet
+                </p>
+              ) : (
+                <div className="space-y-0 max-h-72 overflow-y-auto scrollbar-thin">
+                  {history.map(item => (
+                    <InboxHistoryRow key={item.id} item={item} onEdit={setEditItem} />
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
@@ -353,17 +656,7 @@ export function GTDPage() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
         {/* Sidebar Filters */}
         <aside className="lg:col-span-1 space-y-6">
-          <Card className="border-primary/5 bg-primary/5">
-            <CardHeader className="p-4 pb-2">
-              <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                <Plus size={12} /> Inbox
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 pt-0">
-              <QuickCapture />
-              <InboxSummary />
-            </CardContent>
-          </Card>
+          <InboxPanel />
 
           <div className="space-y-4">
             <div className="space-y-2">
@@ -402,7 +695,7 @@ export function GTDPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between px-1">
                 <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Hashtags</label>
-                {tagFilter.length > 0 && <Button variant="link" size="sm" className="h-auto p-0 text-[10px]" onClick={() => setTagFilter([])}>Clear</Button>}
+                {tagFilter.length > 0 && <Button variant="ghost" size="sm" className="h-auto p-0 text-[10px] text-muted-foreground hover:text-foreground" onClick={() => setTagFilter([])}>Clear</Button>}
               </div>
               <div className="flex flex-wrap gap-1.5 p-1">
                 {allTags.length === 0 ? (
@@ -580,7 +873,7 @@ export function GTDPage() {
                         <CardHeader className="py-2 px-4 bg-muted/30 border-b">
                           <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center justify-between">
                             {ctx}
-                            <Badge variant="ghost" className="h-4 text-[9px]">{ctxActions.length}</Badge>
+                            <Badge variant="secondary" className="h-4 text-[9px]">{ctxActions.length}</Badge>
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="px-4 py-0">
