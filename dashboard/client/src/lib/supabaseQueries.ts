@@ -790,3 +790,33 @@ export async function searchAll(query: string, scope = "all") {
     ).slice(0, 20),
   };
 }
+export async function fetchCalendarEvents(): Promise<RawCalendarEvent[]> {
+  const { data, error } = await supabase
+    .from("calendar_events")
+    .select("*")
+    .order("start_at", { ascending: true });
+  if (error) throw error;
+  return (data as RawCalendarEvent[] | null) || [];
+}
+
+export async function fetchAllHashtags(): Promise<string[]> {
+  // Fetch tags from projects, actions, and inbox
+  const [projects, actions, inbox] = await Promise.all([
+    supabase.from("gtd_projects").select("tags"),
+    supabase.from("gtd_actions").select("tags"),
+    supabase.from("gtd_inbox").select("tags")
+  ]);
+
+  if (projects.error) throw projects.error;
+  if (actions.error) throw actions.error;
+  if (inbox.error) throw inbox.error;
+
+  const allTags = new Set<string>();
+  [projects.data, actions.data, inbox.data].forEach(group => {
+    group?.forEach((item: any) => {
+      item.tags?.forEach((tag: string) => allTags.add(tag));
+    });
+  });
+
+  return Array.from(allTags).sort();
+}
