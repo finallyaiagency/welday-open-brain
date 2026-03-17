@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { completeAction, createProject, fetchActions, fetchProjects, fetchCalendarEvents, fetchAllHashtags } from "@/lib/supabaseQueries";
+import { completeAction, createProject, fetchActions, fetchProjects, fetchCalendarEvents, fetchAllHashtags, fetchInbox } from "@/lib/supabaseQueries";
 import { supabase } from "@/lib/supabase";
 import { contextToHashtag, extractHashtags, formatHashtag } from "@shared/hashtags";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -112,6 +112,34 @@ function CalendarEventRow({ event }: { event: any }) {
             </span>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function InboxSummary() {
+  const { data: inbox = [], isLoading } = useQuery({
+    queryKey: ["/api/inbox"],
+    queryFn: () => fetchInbox(5),
+    refetchInterval: 30_000,
+  });
+
+  if (isLoading) return <Skeleton className="h-20 w-full" />;
+  if (inbox.length === 0) return null;
+
+  return (
+    <div className="space-y-1.5 mt-3 pt-3 border-t border-primary/10">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 px-1">Recent Inbox</p>
+      <div className="space-y-1">
+        {inbox.slice(0, 3).map((item) => (
+          <div key={item.id} className="text-[11px] leading-tight p-1.5 rounded bg-muted/20 border border-transparent hover:border-primary/10 transition-colors truncate">
+            <span className="text-primary/40 mr-1">○</span>
+            {item.rawText}
+          </div>
+        ))}
+        {inbox.length > 3 && (
+          <p className="text-[9px] text-center text-muted-foreground pt-1">+{inbox.length - 3} more in inbox</p>
+        )}
       </div>
     </div>
   );
@@ -333,6 +361,7 @@ export function GTDPage() {
             </CardHeader>
             <CardContent className="p-4 pt-0">
               <QuickCapture />
+              <InboxSummary />
             </CardContent>
           </Card>
 
@@ -436,7 +465,12 @@ export function GTDPage() {
                             </div>
                           ))
                         )}
-                        <Button variant="ghost" size="sm" className="w-full text-xs text-muted-foreground gap-1 mt-4">
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="w-full text-xs text-muted-foreground gap-1 mt-4"
+                          onClick={() => window.open("https://calendar.google.com", "_blank")}
+                        >
                           View full calendar <ArrowRight size={12} />
                         </Button>
                       </div>
