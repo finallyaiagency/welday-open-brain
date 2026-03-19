@@ -70,7 +70,7 @@ GTD destinations:
 - project: Outcome requiring multiple steps
 - someday: Idea to revisit later
 - reference: Information to keep (not actionable)
-- calendar: A scheduled appointment or event with a specific time
+- calendar: A scheduled appointment or event with a specific time or date (priority even if it sounds like an action).
 - trash: Not worth keeping
 
 Respond with JSON only:
@@ -105,7 +105,7 @@ async function fileItem(inbox, classification) {
   let filedItemId = null;
 
   if (classification.destination === 'action') {
-    const { data } = await withTimeout(supabase.from('gtd_actions').insert({
+    const { data, error } = await withTimeout(supabase.from('gtd_actions').insert({
       title: classification.title,
       venture_id: ventureId,
       context: classification.context,
@@ -113,27 +113,30 @@ async function fileItem(inbox, classification) {
       notes: inbox.raw_text,
       tags: [classification.category].filter(Boolean),
     }).select('id').single(), 5000, "Insert Action");
+    if (error) throw new Error(`Action insert failed: ${error.message}`);
     filedItemId = data?.id || null;
   } else if (classification.destination === 'project') {
-    const { data } = await withTimeout(supabase.from('gtd_projects').insert({
+    const { data, error } = await withTimeout(supabase.from('gtd_projects').insert({
       title: classification.title,
       venture_id: ventureId,
       area: classification.category,
       notes: inbox.raw_text,
       tags: [classification.category].filter(Boolean),
     }).select('id').single(), 5000, "Insert Project");
+    if (error) throw new Error(`Project insert failed: ${error.message}`);
     filedItemId = data?.id || null;
   } else if (classification.destination === 'someday') {
-    const { data } = await withTimeout(supabase.from('gtd_someday').insert({
+    const { data, error } = await withTimeout(supabase.from('gtd_someday').insert({
       title: classification.title,
       description: inbox.raw_text,
       venture_id: ventureId,
       area: classification.category,
       tags: [classification.category].filter(Boolean),
     }).select('id').single(), 5000, "Insert Someday");
+    if (error) throw new Error(`Someday insert failed: ${error.message}`);
     filedItemId = data?.id || null;
   } else if (classification.destination === 'reference') {
-    const { data } = await withTimeout(supabase.from('gtd_reference').insert({
+    const { data, error } = await withTimeout(supabase.from('gtd_reference').insert({
       title: classification.title,
       content: inbox.raw_text,
       venture_id: ventureId,
@@ -141,11 +144,12 @@ async function fileItem(inbox, classification) {
       area: classification.category,
       tags: [classification.category].filter(Boolean),
     }).select('id').single(), 5000, "Insert Reference");
+    if (error) throw new Error(`Reference insert failed: ${error.message}`);
     filedItemId = data?.id || null;
   } else if (classification.destination === 'calendar') {
-    const { data } = await withTimeout(supabase.from('calendar_events').insert({
+    const { data, error } = await withTimeout(supabase.from('calendar_events').insert({
       title: classification.title,
-      description: classification.summary + "\\n" + inbox.raw_text,
+      description: classification.summary + (inbox.raw_text ? "\n\n" + inbox.raw_text : ""),
       start_at: classification.start_at || new Date().toISOString(),
       end_at: classification.end_at || new Date(Date.now() + 3600000).toISOString(),
       source: 'system',
@@ -154,6 +158,7 @@ async function fileItem(inbox, classification) {
       status: 'confirmed',
       google_calendar_id: 'weldayenterprises@gmail.com'
     }).select('id').single(), 5000, "Insert Calendar Event");
+    if (error) throw new Error(`Calendar insert failed: ${error.message}`);
     filedItemId = data?.id || null;
   }
 
@@ -208,7 +213,7 @@ async function runFiler() {
     duration_ms: Date.now() - startTime,
     model_used: GEMINI_MODEL,
     success: true,
-  }), 3000, "Agent Log Insert").catch(() => {});
+  }), 10000, "Agent Log Insert").catch((e) => console.error(`[GTD Filer] Failed to insert agent log:`, e.message));
 
   console.log(`[GTD Filer] Done. ${processed}/${items.length} items filed.`);
 }
