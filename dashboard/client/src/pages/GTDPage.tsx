@@ -19,6 +19,7 @@ import type { GtdAction, GtdProject, GtdInbox } from "@shared/schema";
 import { formatSourceLabel } from "@/lib/sourceLabels";
 import { motion, AnimatePresence } from "framer-motion";
 import { format, isToday, isTomorrow, isSameDay, parseISO, startOfDay, addDays, formatDistanceToNow } from "date-fns";
+import { CalendarView } from "@/components/CalendarView";
 
 const LIFE_DOMAIN_OPTIONS = [
   { value: "all", label: "All" },
@@ -543,7 +544,7 @@ function KanbanColumn({ title, actions, onCompleteAction }: { title: string; act
 }
 
 export function GTDPage() {
-  const [view, setView] = useState<"dashboard" | "kanban" | "list">("dashboard");
+  const [view, setView] = useState<"dashboard" | "kanban" | "list" | "calendar">("dashboard");
   const [lifeDomain, setLifeDomain] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
   const [tagFilter, setTagFilter] = useState<string[]>([]);
@@ -650,6 +651,14 @@ export function GTDPage() {
           >
             <List size={14} /> List
           </Button>
+          <Button 
+            variant={view === "calendar" ? "secondary" : "ghost"} 
+            size="sm" 
+            onClick={() => setView("calendar")}
+            className="h-8 gap-1.5 px-3"
+          >
+            <Calendar size={14} /> Calendar
+          </Button>
         </div>
       </header>
 
@@ -724,6 +733,14 @@ export function GTDPage() {
             </div>
           ) : (
             <AnimatePresence mode="wait">
+              {view === "calendar" && (
+                <CalendarView
+                  key="calendar-view"
+                  events={calendarEvents}
+                  actions={filteredActions}
+                  onCompleteAction={(id) => completeMutation.mutate(id)}
+                />
+              )}
               {view === "dashboard" && (
                 <motion.div 
                   key="dashboard"

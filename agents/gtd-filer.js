@@ -60,7 +60,8 @@ async function callGemini(prompt) {
 }
 
 async function classifyItem(text) {
-  const prompt = `Classify this GTD inbox item and tell me where to file it.
+  const now = new Date().toISOString();
+  const prompt = `Classify this GTD inbox item and tell me where to file it. Current time is ${now}.
 
 Inbox text: "${text}"
 
@@ -69,16 +70,19 @@ GTD destinations:
 - project: Outcome requiring multiple steps
 - someday: Idea to revisit later
 - reference: Information to keep (not actionable)
+- calendar: A scheduled appointment or event with a specific time
 - trash: Not worth keeping
 
 Respond with JSON only:
 {
-  "destination": "action" | "project" | "someday" | "reference" | "trash",
+  "destination": "action" | "project" | "someday" | "reference" | "calendar" | "trash",
   "title": "clean, concise title",
   "summary": "one sentence summary",
   "category": "work" | "personal" | "health" | "finance" | "learning" | "business",
   "venture_slug": "relevant-venture-slug or null",
   "context": "@computer" | "@phone" | "@errands" | "@waiting" | null,
+  "start_at": "ISO-8601 UTC date or null if not calendar",
+  "end_at": "ISO-8601 UTC date or null if not calendar",
   "energy": "high" | "medium" | "low",
   "confidence": 0.0-1.0
 }`;
@@ -138,6 +142,19 @@ async function fileItem(inbox, classification) {
       tags: [classification.category].filter(Boolean),
     }).select('id').single(), 5000, "Insert Reference");
     filedItemId = data?.id || null;
+  } else if (classification.destination === 'calendar') {
+    const { data } = await withTimeout(supabase.from('calendar_events').insert({
+      title: classification.title,
+      description: classification.summary + "\\n" + inbox.raw_text,
+      start_at: classification.start_at || new Date().toISOString(),
+      end_at: classification.end_at || new Date(Date.now() + 3600000).toISOString(),
+      source: 'system',
+      event_type: ['work', 'business'].includes(classification.category) ? 'work' : 'personal',
+      life_domain: 'unknown',
+      status: 'confirmed',
+      google_calendar_id: 'weldayenterprises@gmail.com'
+    }).select('id').single(), 5000, "Insert Calendar Event");
+    filedItemId = data?.id || null;
   }
 
   await withTimeout(supabase.from('gtd_inbox').update({
@@ -187,7 +204,7 @@ async function runFiler() {
     input_summary: `${items.length} inbox items`,
     output_summary: `Processed ${processed} items`,
     tables_read: ['gtd_inbox', 'ventures'],
-    tables_written: ['gtd_actions', 'gtd_projects', 'gtd_someday', 'gtd_reference', 'gtd_inbox'],
+    tables_written: ['gtd_actions', 'gtd_projects', 'gtd_someday', 'gtd_reference', 'calendar_events', 'gtd_inbox'],
     duration_ms: Date.now() - startTime,
     model_used: GEMINI_MODEL,
     success: true,

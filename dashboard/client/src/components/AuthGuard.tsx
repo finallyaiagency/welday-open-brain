@@ -3,7 +3,7 @@ import { supabase, signInWithGoogle, signOut } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import type { Session } from "@supabase/supabase-js";
 
-const ALLOWED_EMAIL = "welldayenterprises@gmail.com";
+const ALLOWED_EMAIL = "weldayenterprises@gmail.com";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null | "loading">("loading");

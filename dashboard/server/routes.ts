@@ -1249,7 +1249,8 @@ async function upsertBotMemoryEmbeddings(supabase: any, params: { memoryId: stri
 }
 
 async function classifyInboxItem(supabase: any, text: string, projectCatalog: any[] = []) {
-  const prompt = `Classify this GTD inbox item and tell me where to file it.
+  const now = new Date().toISOString();
+  const prompt = `Classify this GTD inbox item and tell me where to file it. Current time is ${now}.
 
 Inbox text: "${text}"
 
@@ -1261,11 +1262,12 @@ GTD destinations:
 - project: Outcome requiring multiple steps
 - someday: Idea to revisit later
 - reference: Information to keep (not actionable)
+- calendar: A scheduled appointment or event with a specific time
 - trash: Not worth keeping
 
 Respond with JSON only:
 {
-  "destination": "action" | "project" | "someday" | "reference" | "trash",
+  "destination": "action" | "project" | "someday" | "reference" | "calendar" | "trash",
   "title": "clean, concise title",
   "summary": "one sentence summary",
   "life_domain": "business" | "personal" | "unknown",
@@ -1273,6 +1275,8 @@ Respond with JSON only:
   "venture_slug": "relevant-venture-slug or null",
   "project_title": "matching active project title or null",
   "context": "@home" | "@work" | "@computer" | "@phone" | "@errands" | "@agenda" | "@email" | "@anywhere" | "@waiting" | null,
+  "start_at": "ISO-8601 UTC date or null if not calendar",
+  "end_at": "ISO-8601 UTC date or null if not calendar",
   "energy": "high" | "medium" | "low",
   "confidence": 0.0-1.0
 }`;
@@ -1362,6 +1366,20 @@ async function fileInboxItem(supabase: any, inbox: any, classification: any) {
       category: "idea",
       area: category,
       tags,
+    }).select("id").single();
+    if (inserted.error) throw inserted.error;
+    filedItemId = inserted.data?.id || null;
+  } else if (classification.destination === "calendar") {
+    const inserted = await supabase.from("calendar_events").insert({
+      title: classification.title,
+      description: classification.summary + "\\n" + inbox.raw_text,
+      start_at: classification.start_at || new Date().toISOString(),
+      end_at: classification.end_at || new Date(Date.now() + 3600000).toISOString(),
+      source: "system",
+      event_type: category === "work" || category === "business" ? "work" : "personal",
+      life_domain: lifeDomain,
+      status: "confirmed",
+      google_calendar_id: "weldayenterprises@gmail.com"
     }).select("id").single();
     if (inserted.error) throw inserted.error;
     filedItemId = inserted.data?.id || null;
@@ -2323,7 +2341,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
     const captureMatch = message.match(/^(?:add|capture|inbox|remember|note|remind me[:\s]+)(.+)/i);
     if (captureMatch && supabase) {
       const rawText = captureMatch[1].trim();
-      await supabase.from("gtd_inbox").insert({ source: "web", raw_text: rawText, tags: extractHashtags(rawText) }).catch(() => {});
+      try {
+        await supabase.from("gtd_inbox").insert({ source: "web", raw_text: rawText, tags: extractHashtags(rawText) });
+      } catch (e) {}
     }
 
     try {
