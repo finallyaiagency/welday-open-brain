@@ -922,17 +922,38 @@ export async function fetchCalendarEvents(): Promise<RawCalendarEvent[]> {
   const { data, error } = await supabase
     .from("calendar_events")
     .select("*")
+    .neq("status", "cancelled")
     .order("start_at", { ascending: true });
   if (error) throw error;
   return (data as RawCalendarEvent[] | null) || [];
 }
 
 export async function deleteCalendarEvent(id: string) {
-  const { error } = await supabase
+  // First check if it has a google_event_id
+  const { data } = await supabase
     .from("calendar_events")
-    .delete()
-    .eq("id", id);
-  if (error) throw error;
+    .select("google_event_id")
+    .eq("id", id)
+    .single();
+
+  if (data?.google_event_id) {
+    // For Google events, we mark as cancelled so the sync agent pushes the deletion to Google
+    const { error } = await supabase
+      .from("calendar_events")
+      .update({ 
+        status: "cancelled",
+        updated_at: new Date().toISOString() 
+      })
+      .eq("id", id);
+    if (error) throw error;
+  } else {
+    // For local events, we can just delete
+    const { error } = await supabase
+      .from("calendar_events")
+      .delete()
+      .eq("id", id);
+    if (error) throw error;
+  }
 }
 
 export async function fetchAllHashtags(): Promise<string[]> {
