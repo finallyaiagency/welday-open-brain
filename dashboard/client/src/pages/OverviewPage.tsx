@@ -1,5 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchPortfolioStats, fetchVentures, fetchCeoRecs, fetchActions, fetchCalendarEvents, fetchWaitingActions } from "@/lib/supabaseQueries";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { fetchPortfolioStats, fetchVentures, fetchCeoRecs, fetchActions, fetchCalendarEvents, fetchWaitingActions, deleteCalendarEvent } from "@/lib/supabaseQueries";
+import { queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -91,6 +92,11 @@ export function OverviewPage() {
   const { data: waiting = [] } = useQuery({
     queryKey: ["/api/actions", "waiting-list"],
     queryFn: fetchWaitingActions,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteCalendarEvent,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] }),
   });
 
   const urgentActions = actions.filter((a: any) => a.dueDate && new Date(a.dueDate) <= new Date(Date.now() + 86400000 * 3));
@@ -187,7 +193,16 @@ export function OverviewPage() {
               <p className="text-[10px] text-muted-foreground py-4 text-center italic">No upcoming events</p>
             ) : (
               upcomingEvents.slice(0, 5).map((e: any) => (
-                <CalendarEventRow key={e.id} event={e} showDate={true} />
+                <CalendarEventRow 
+                  key={e.id} 
+                  event={e} 
+                  showDate={true} 
+                  onDelete={(id) => {
+                    if (confirm("Are you sure you want to delete this event?")) {
+                      deleteMutation.mutate(id);
+                    }
+                  }} 
+                />
               ))
             )}
             <Link href="/gtd">

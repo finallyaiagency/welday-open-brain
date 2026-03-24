@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { completeAction, createProject, fetchActions, fetchProjects, fetchCalendarEvents, fetchAllHashtags, fetchInbox, fetchInboxHistory, updateInboxText, fetchWaitingActions, fetchReferences, fetchSomeday } from "@/lib/supabaseQueries";
+import { completeAction, createProject, fetchActions, fetchProjects, fetchCalendarEvents, fetchAllHashtags, fetchInbox, fetchInboxHistory, updateInboxText, fetchWaitingActions, fetchReferences, fetchSomeday, deleteCalendarEvent } from "@/lib/supabaseQueries";
 import { supabase } from "@/lib/supabase";
 import { contextToHashtag, extractHashtags, formatHashtag, mergeHashtags } from "@shared/hashtags";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -527,7 +527,7 @@ function InboxPanel() {
   );
 }
 
-function TimelineDay({ date, actions, events, onCompleteAction }: { date: Date; actions: GtdAction[]; events: any[]; onCompleteAction: (id: string) => void }) {
+function TimelineDay({ date, actions, events, onCompleteAction, onDeleteEvent }: { date: Date; actions: GtdAction[]; events: any[]; onCompleteAction: (id: string) => void; onDeleteEvent?: (id: string) => void }) {
   const isTodayDate = isToday(date);
   const isTomorrowDate = isTomorrow(date);
   const label = isTodayDate ? "Today" : isTomorrowDate ? "Tomorrow" : format(date, "EEEE, MMM d");
@@ -542,7 +542,13 @@ function TimelineDay({ date, actions, events, onCompleteAction }: { date: Date; 
       <Card className={`${isTodayDate ? "border-primary/20 bg-primary/5 shadow-sm" : "border-border bg-card/50"}`}>
         <CardContent className="p-4 space-y-0">
           <AnimatePresence>
-            {events.map(event => <CalendarEventRow key={event.id} event={event} />)}
+            {events.map(event => (
+              <CalendarEventRow 
+                key={event.id} 
+                event={event} 
+                onDelete={onDeleteEvent} 
+              />
+            ))}
             {actions.map(action => (
               <ActionRow 
                 key={action.id} 
@@ -790,6 +796,11 @@ export function GTDPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/actions"] }),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: deleteCalendarEvent,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] }),
+  });
+
   const filterItem = (item: any) => {
     if (lifeDomain !== "all" && (item.lifeDomain || "unknown") !== lifeDomain) return false;
     if (projectFilter !== "all" && (item.projectId || "__none__") !== projectFilter) return false;
@@ -1029,6 +1040,11 @@ export function GTDPage() {
                       events={calendarEvents}
                       actions={filteredActions}
                       onCompleteAction={(id) => completeMutation.mutate(id)}
+                      onDeleteEvent={(id) => {
+                        if (confirm("Are you sure you want to delete this event?")) {
+                          deleteMutation.mutate(id);
+                        }
+                      }}
                     />
                   </div>
                   <div className="space-y-4">
@@ -1043,7 +1059,15 @@ export function GTDPage() {
                         .map((e: any) => (
                           <Card key={e.id} className="bg-card/50 border-border/50 hover:border-primary/20 transition-all">
                             <CardContent className="p-3">
-                              <CalendarEventRow event={e} showDate={true} />
+                              <CalendarEventRow 
+                                event={e} 
+                                showDate={true} 
+                                onDelete={(id) => {
+                                  if (confirm("Are you sure you want to delete this event?")) {
+                                    deleteMutation.mutate(id);
+                                  }
+                                }}
+                              />
                             </CardContent>
                           </Card>
                         ))}
@@ -1084,6 +1108,11 @@ export function GTDPage() {
                                 actions={day.actions} 
                                 events={day.events}
                                 onCompleteAction={(id) => completeMutation.mutate(id)}
+                                onDeleteEvent={(id) => {
+                                  if (confirm("Are you sure you want to delete this event?")) {
+                                    deleteMutation.mutate(id);
+                                  }
+                                }}
                               />
                             </div>
                           ))
@@ -1118,7 +1147,15 @@ export function GTDPage() {
                                 .slice(0, 5)
                                 .map((e: any) => (
                                   <div key={e.id} className="py-1 border-b border-border/40 last:border-0 last:pb-0">
-                                    <CalendarEventRow event={e} showDate={true} />
+                                    <CalendarEventRow 
+                                      event={e} 
+                                      showDate={true} 
+                                      onDelete={(id) => {
+                                        if (confirm("Are you sure you want to delete this event?")) {
+                                          deleteMutation.mutate(id);
+                                        }
+                                      }}
+                                    />
                                   </div>
                                 ))
                             )}

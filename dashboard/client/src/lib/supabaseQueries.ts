@@ -927,6 +927,14 @@ export async function fetchCalendarEvents(): Promise<RawCalendarEvent[]> {
   return (data as RawCalendarEvent[] | null) || [];
 }
 
+export async function deleteCalendarEvent(id: string) {
+  const { error } = await supabase
+    .from("calendar_events")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
 export async function fetchAllHashtags(): Promise<string[]> {
   // Fetch tags from projects, actions, and inbox
   const [projects, actions, inbox, references] = await Promise.all([

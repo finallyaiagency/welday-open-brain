@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, parseISO, isToday, startOfWeek, endOfWeek } from "date-fns";
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock } from "lucide-react";
+import { formatInTimeZone } from "date-fns-tz";
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { motion } from "framer-motion";
 import type { GtdAction } from "@shared/schema";
 
-export function CalendarView({ events, actions, onCompleteAction }: { events: any[]; actions: GtdAction[]; onCompleteAction?: (id: string) => void }) {
+export function CalendarView({ events, actions, onCompleteAction, onDeleteEvent }: { events: any[]; actions: GtdAction[]; onCompleteAction?: (id: string) => void, onDeleteEvent?: (id: string) => void }) {
   const [currentDate, setCurrentDate] = useState(new Date());
 
   const monthStart = startOfMonth(currentDate);
@@ -80,12 +81,23 @@ export function CalendarView({ events, actions, onCompleteAction }: { events: an
                   {dayEvents.map(event => {
                     const isBusiness = event.life_domain === "business";
                     const hasTime = !event.all_day && event.start_at;
-                    const time = hasTime ? format(parseISO(event.start_at), "h:mma").toLowerCase() : "";
+                    const time = hasTime ? formatInTimeZone(parseISO(event.start_at), "America/New_York", "h:mma").toLowerCase() : "";
                     
                     return (
-                      <div key={event.id} className={`text-[10px] px-1.5 py-1 rounded truncate border flex items-center gap-1.5 cursor-default hover:opacity-80 transition-opacity ${isBusiness ? "bg-blue-500/10 text-blue-700 border-blue-500/20 dark:text-blue-400" : "bg-green-500/10 text-green-700 border-green-500/20 dark:text-green-400"}`}>
+                      <div key={event.id} className={`text-[10px] px-1.5 py-1 rounded truncate border flex items-center gap-1.5 cursor-default hover:opacity-80 transition-opacity group relative ${isBusiness ? "bg-blue-500/10 text-blue-700 border-blue-500/20 dark:text-blue-400" : "bg-green-500/10 text-green-700 border-green-500/20 dark:text-green-400"}`}>
                         {hasTime && <span className="font-semibold opacity-70 tabular-nums leading-none tracking-tight">{time}</span>}
-                        <span className="truncate flex-1 leading-none">{event.title}</span>
+                        <span className="truncate flex-1 leading-none pr-3">{event.title}</span>
+                        {onDeleteEvent && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteEvent(event.id);
+                            }}
+                            className="bg-background/80 hover:bg-destructive hover:text-destructive-foreground p-0.5 rounded absolute right-0.5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Trash2 size={8} />
+                          </button>
+                        )}
                       </div>
                     );
                   })}

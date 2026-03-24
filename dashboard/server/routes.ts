@@ -1252,10 +1252,11 @@ async function upsertBotMemoryEmbeddings(supabase: any, params: { memoryId: stri
 
 async function classifyInboxBatch(supabase: any, items: any[], projectCatalog: any[] = []) {
   if (!items?.length) return [];
-  const now = new Date().toISOString();
+  const now = new Date();
+  const easternTime = now.toLocaleString("en-US", { timeZone: "America/New_York" });
   const itemsList = items.map((item, i) => `ITEM_${i}:\nID: ${item.id}\nText: "${item.raw_text}"`).join("\n\n---\n\n");
 
-  const prompt = `Classify these ${items.length} GTD inbox items and tell me where to file each. Current time is ${now}.
+  const prompt = `Classify these ${items.length} GTD inbox items and tell me where to file each. User's local time (Eastern Time) is ${easternTime}.
 
 Active projects:
 ${buildProjectCatalogPrompt(projectCatalog)}
@@ -1281,8 +1282,8 @@ Format:
     "venture_slug": "relevant-venture-slug or null",
     "project_title": "matching active project title or null",
     "context": "@home" | "@work" | "@computer" | "@phone" | "@errands" | "@agenda" | "@email" | "@anywhere" | "@waiting" | null,
-    "start_at": "ISO-8601 UTC date or null",
-    "end_at": "ISO-8601 UTC date or null",
+    "start_at": "ISO-8601 date with -04:00 offset or null",
+    "end_at": "ISO-8601 date with -04:00 offset or null",
     "energy": "high" | "medium" | "low",
     "confidence": 0.0-1.0
   },
@@ -1307,8 +1308,9 @@ ${itemsList}`;
 }
 
 async function classifyInboxItem(supabase: any, text: string, projectCatalog: any[] = []) {
-  const now = new Date().toISOString();
-  const prompt = `Classify this GTD inbox item and tell me where to file it. Current time is ${now}.
+  const now = new Date();
+  const easternTime = now.toLocaleString("en-US", { timeZone: "America/New_York" });
+  const prompt = `Classify this GTD inbox item and tell me where to file it. User's local time (Eastern Time) is ${easternTime}.
 
 Inbox text: "${text}"
 
@@ -1333,8 +1335,8 @@ Respond with JSON only:
   "venture_slug": "relevant-venture-slug or null",
   "project_title": "matching active project title or null",
   "context": "@home" | "@work" | "@computer" | "@phone" | "@errands" | "@agenda" | "@email" | "@anywhere" | "@waiting" | null,
-  "start_at": "ISO-8601 UTC date or null if not calendar",
-  "end_at": "ISO-8601 UTC date or null if not calendar",
+  "start_at": "ISO-8601 date with -04:00 offset or null if not calendar",
+  "end_at": "ISO-8601 date with -04:00 offset or null if not calendar",
   "energy": "high" | "medium" | "low",
   "confidence": 0.0-1.0
 }`;
@@ -1432,7 +1434,7 @@ async function fileInboxItem(supabase: any, inbox: any, classification: any) {
     if (inserted.error) throw inserted.error;
     filedItemId = inserted.data?.id || null;
   } else if (classification.destination === "calendar") {
-    const inserted = await supabase.from("calendar_events").insert({
+    const payload = {
       title: classification.title,
       description: (classification.summary + "\n" + inbox.raw_text).replace(/\\n/g, "\n"),
       start_at: classification.start_at || new Date().toISOString(),
@@ -1442,8 +1444,14 @@ async function fileInboxItem(supabase: any, inbox: any, classification: any) {
       life_domain: lifeDomain,
       status: "confirmed",
       google_calendar_id: "weldayenterprises@gmail.com"
-    }).select("id").single();
-    if (inserted.error) throw inserted.error;
+    };
+    console.log("[GTD] filing to calendar:", JSON.stringify(payload, null, 2));
+    const inserted = await supabase.from("calendar_events").insert(payload).select("id").single();
+    if (inserted.error) {
+      console.error("[GTD] calendar insert error:", inserted.error);
+      throw inserted.error;
+    }
+    console.log("[GTD] calendar insert success, ID:", inserted.data?.id);
     filedItemId = inserted.data?.id || null;
   }
 
@@ -2531,6 +2539,30 @@ export function registerRoutes(httpServer: Server, app: Express) {
     return res.json(data || []);
   });
 
+  app.get("/api/calendar/events", async (_req, res) => {
+    const supabase = getSupabase();
+    if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+    const { data, error } = await supabase
+      .from("calendar_events")
+      .select("*, ventures(name, slug)")
+      .order("start_at", { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data || []);
+  });
+
+  app.get("/api/actions", async (req, res) => {
+    const supabase = getSupabase();
+    if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+    const status = req.query.status as string || "active";
+    const { data, error } = await supabase
+      .from("gtd_actions")
+      .select("*, gtd_projects(title), ventures(name, slug)")
+      .eq("status", status)
+      .order("due_date", { ascending: true, nullsFirst: false });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data || []);
+  });
+
   app.post("/api/gtd/process", async (req, res) => {
     const auth = isAuthorizedProcessRequest(req);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
@@ -2716,5 +2748,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
   app.post("/api/ceo/run", async (_req, res) => {
     res.json({ message: "CEO agent triggered — run ceo-agent.js with env vars" });
+  });
+
+  app.all("/api/*", (_req, res) => {
+    res.status(404).json({ error: "API endpoint not found" });
   });
 }

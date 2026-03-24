@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { fetchCalendarEvents, completeAction, fetchActions } from "@/lib/supabaseQueries";
+import { fetchCalendarEvents, completeAction, fetchActions, deleteCalendarEvent } from "@/lib/supabaseQueries";
 import { queryClient } from "@/lib/queryClient";
 import { CalendarView } from "@/components/CalendarView";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,6 +25,11 @@ export function CalendarPage() {
   const completeMutation = useMutation({
     mutationFn: completeAction,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/actions"] }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteCalendarEvent,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] }),
   });
 
   const upcomingEvents = events
@@ -54,6 +59,11 @@ export function CalendarPage() {
                 events={events} 
                 actions={actions}
                 onCompleteAction={(id) => completeMutation.mutate(id)}
+                onDeleteEvent={(id) => {
+                  if (confirm("Are you sure you want to delete this event?")) {
+                    deleteMutation.mutate(id);
+                  }
+                }}
               />
             </CardContent>
           </Card>
@@ -88,7 +98,15 @@ export function CalendarPage() {
                     >
                       <Card className={`hover:border-primary/20 transition-all ${isToday(parseISO(event.start_at)) ? "border-primary/20 bg-primary/5 shadow-sm" : ""}`}>
                         <CardContent className="p-3">
-                          <CalendarEventRow event={event} showDate={true} />
+                          <CalendarEventRow 
+                            event={event} 
+                            showDate={true} 
+                            onDelete={(id) => {
+                              if (confirm("Are you sure you want to delete this event?")) {
+                                deleteMutation.mutate(id);
+                              }
+                            }} 
+                          />
                         </CardContent>
                       </Card>
                     </motion.div>
