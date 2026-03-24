@@ -220,17 +220,50 @@ export const botMemoryEmbeddings = pgTable("bot_memory_embeddings", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// GTD Reference
+export const gtdReference = pgTable("gtd_reference", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  content: text("content"),
+  url: text("url"),
+  projectId: uuid("project_id").references(() => gtdProjects.id),
+  ventureId: uuid("venture_id").references(() => ventures.id),
+  area: text("area"),
+  category: text("category").default("general"),
+  tags: text("tags").array(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// GTD Someday
+export const gtdSomeday = pgTable("gtd_someday", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  description: text("description"),
+  ventureId: uuid("venture_id").references(() => ventures.id),
+  area: text("area"),
+  reviewDate: date("review_date"),
+  promotedTo: text("promoted_to"),
+  promotedItemId: uuid("promoted_item_id"),
+  isArchived: boolean("is_archived").default(false),
+  tags: text("tags").array(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Insert Schemas
 export const insertGtdInboxSchema = createInsertSchema(gtdInbox);
 export const insertGtdActionSchema = createInsertSchema(gtdActions);
 export const insertGtdProjectSchema = createInsertSchema(gtdProjects);
 export const insertSavedDashboardSchema = createInsertSchema(savedDashboards);
+export const insertGtdReferenceSchema = createInsertSchema(gtdReference);
 
 // Types
 export type Venture = typeof ventures.$inferSelect;
 export type GtdInbox = typeof gtdInbox.$inferSelect;
 export type GtdProject = typeof gtdProjects.$inferSelect;
 export type GtdAction = typeof gtdActions.$inferSelect;
+export type GtdReference = typeof gtdReference.$inferSelect;
+export type GtdSomeday = typeof gtdSomeday.$inferSelect;
 export type CeoRecommendation = typeof ceoRecommendations.$inferSelect;
 export type SavedDashboard = typeof savedDashboards.$inferSelect;
 export type AgentLog = typeof agentLogs.$inferSelect;
@@ -247,3 +280,4 @@ export type InsertGtdInbox = z.infer<typeof insertGtdInboxSchema>;
 export type InsertGtdAction = z.infer<typeof insertGtdActionSchema>;
 export type InsertGtdProject = z.infer<typeof insertGtdProjectSchema>;
 export type InsertSavedDashboard = z.infer<typeof insertSavedDashboardSchema>;
+export type InsertGtdReference = z.infer<typeof insertGtdReferenceSchema>;

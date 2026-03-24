@@ -1115,7 +1115,7 @@ async function buildContext(sb: any): Promise<string> {
     sb.from("gtd_inbox").select("raw_text,life_domain").eq("processed",false).limit(4),
     sb.from("gtd_actions").select("title,delegated_to,life_domain").eq("status","waiting").limit(4),
     sb.from("ventures").select("name,readiness_score").eq("status","active").order("readiness_score",{ascending:false}),
-    sb.from("ceo_recommendations").select("title,priority").eq("status","new").in("priority",["critical","high"]).limit(3),
+    sb.from("ceo_recommendations").select("title,priority").eq("status","new").in("priority",["critical","high"]).order("generated_at", { ascending: false }).limit(3),
     getPendingSchemaReviewSummary(sb, 3),
   ]);
 
@@ -1606,7 +1606,7 @@ async function buildMoneypennyReviewPayload(sb: any, window: "morning" | "evenin
     sb.from("gtd_actions").select("title,delegated_to,due_date,life_domain").eq("status", "waiting").order("due_date", { ascending: true }).limit(5),
     sb.from("gtd_inbox").select("raw_text,created_at,life_domain").eq("processed", false).order("created_at", { ascending: true }).limit(4),
     sb.from("calendar_events").select("title,start_at,end_at,all_day,location,status,life_domain,ventures(name)").neq("status", "cancelled").lte("start_at", horizon.toISOString()).order("start_at", { ascending: true }).limit(20),
-    sb.from("ceo_recommendations").select("title,priority").eq("status", "new").in("priority", ["critical", "high"]).limit(3),
+    sb.from("ceo_recommendations").select("title,priority").eq("status", "new").in("priority", ["critical", "high"]).order("generated_at", { ascending: false }).limit(3),
     getPendingSchemaReviewSummary(sb, 3),
   ]);
 

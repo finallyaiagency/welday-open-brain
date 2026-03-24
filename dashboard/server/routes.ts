@@ -108,7 +108,9 @@ function getSupabase() {
     console.log("[express] getSupabase: missing URL or KEY", { url: !!url, key: !!key });
     return null;
   }
-  console.log(`[express] getSupabase: URL=${url} KEY_LEN=${key.length} START=${key.substring(0, 10)} END=${key.slice(-10)}`);
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`[express] getSupabase: URL=${url} KEY_LEN=${key.length}`);
+  }
   return createClient(url, key);
 }
 
@@ -741,7 +743,7 @@ function schemaProposalRowToOperation(row: any) {
   };
 }
 
-async function fetchWithTimeout(url: string, options: any = {}, timeout = 25000) {
+async function fetchWithTimeout(url: string, options: any = {}, timeout = 60000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
@@ -790,7 +792,7 @@ async function callOpenRouter(messages: any[], maxTokens: number, openRouterKey:
       ],
       max_tokens: maxTokens,
     }),
-  }, 25000);
+  }, 60000);
 
   if (!res.ok) throw new Error(`OpenRouter: ${await res.text()}`);
   const data = await res.json() as any;
@@ -912,7 +914,7 @@ async function embedText(text: string, taskType: "RETRIEVAL_QUERY" | "RETRIEVAL_
       taskType,
       outputDimensionality: GEMINI_EMBEDDING_DIMENSIONS,
     }),
-  }, 25000);
+  }, 60000);
 
   if (!res.ok) throw new Error(`Gemini embeddings: ${await res.text()}`);
 
@@ -1248,6 +1250,62 @@ async function upsertBotMemoryEmbeddings(supabase: any, params: { memoryId: stri
   return { chunkCount: rows.length };
 }
 
+async function classifyInboxBatch(supabase: any, items: any[], projectCatalog: any[] = []) {
+  if (!items?.length) return [];
+  const now = new Date().toISOString();
+  const itemsList = items.map((item, i) => `ITEM_${i}:\nID: ${item.id}\nText: "${item.raw_text}"`).join("\n\n---\n\n");
+
+  const prompt = `Classify these ${items.length} GTD inbox items and tell me where to file each. Current time is ${now}.
+
+Active projects:
+${buildProjectCatalogPrompt(projectCatalog)}
+
+GTD destinations:
+- action: A concrete next step
+- project: Outcome requiring multiple steps
+- someday: Idea to revisit later
+- reference: Information to keep (not actionable)
+- calendar: A scheduled appointment, meeting, or event with a specific time and date. MUST use this for any appointment.
+- trash: Not worth keeping
+
+Respond with a JSON array of objects, one for each and every ITEM_X provided.
+Format:
+[
+  {
+    "id": "match-the-item-id",
+    "destination": "action" | "project" | "someday" | "reference" | "calendar" | "trash",
+    "title": "clean, concise title",
+    "summary": "one sentence summary",
+    "life_domain": "business" | "personal" | "unknown",
+    "category": "work" | "personal" | "health" | "finance" | "learning" | "business",
+    "venture_slug": "relevant-venture-slug or null",
+    "project_title": "matching active project title or null",
+    "context": "@home" | "@work" | "@computer" | "@phone" | "@errands" | "@agenda" | "@email" | "@anywhere" | "@waiting" | null,
+    "start_at": "ISO-8601 UTC date or null",
+    "end_at": "ISO-8601 UTC date or null",
+    "energy": "high" | "medium" | "low",
+    "confidence": 0.0-1.0
+  },
+  ...
+]
+
+Items:
+${itemsList}`;
+
+  try {
+    const { content } = await openAIChat([
+      { role: "system", content: "You are a precise GTD classifier. Return a valid JSON array only." },
+      { role: "user", content: prompt },
+    ], 3000);
+    const results = parseJsonResponse(content);
+    if (!Array.isArray(results)) throw new Error("Batch classification did not return an array");
+    return results;
+  } catch (err) {
+    console.error(`[GTD] batch classification failed for ${items.length} items:`, err);
+    throw err;
+  }
+}
+
 async function classifyInboxItem(supabase: any, text: string, projectCatalog: any[] = []) {
   const now = new Date().toISOString();
   const prompt = `Classify this GTD inbox item and tell me where to file it. Current time is ${now}.
@@ -1262,7 +1320,7 @@ GTD destinations:
 - project: Outcome requiring multiple steps
 - someday: Idea to revisit later
 - reference: Information to keep (not actionable)
-- calendar: A scheduled appointment or event with a specific time
+- calendar: A scheduled appointment, meeting, or event with a specific time and date. MUST use this for any appointment.
 - trash: Not worth keeping
 
 Respond with JSON only:
@@ -1359,9 +1417,13 @@ async function fileInboxItem(supabase: any, inbox: any, classification: any) {
     if (inserted.error) throw inserted.error;
     filedItemId = inserted.data?.id || null;
   } else if (classification.destination === "reference") {
+    const urlMatch = inbox.raw_text.match(/https?:\/\/[^\s]+/i);
+    const extractedUrl = urlMatch ? urlMatch[0].replace(/[.,!?;:)]+$/, "") : null;
+
     const inserted = await supabase.from("gtd_reference").insert({
       title: classification.title,
       content: inbox.raw_text,
+      url: extractedUrl,
       venture_id: ventureId,
       category: "idea",
       area: category,
@@ -1372,7 +1434,7 @@ async function fileInboxItem(supabase: any, inbox: any, classification: any) {
   } else if (classification.destination === "calendar") {
     const inserted = await supabase.from("calendar_events").insert({
       title: classification.title,
-      description: classification.summary + "\\n" + inbox.raw_text,
+      description: (classification.summary + "\n" + inbox.raw_text).replace(/\\n/g, "\n"),
       start_at: classification.start_at || new Date().toISOString(),
       end_at: classification.end_at || new Date(Date.now() + 3600000).toISOString(),
       source: "system",
@@ -1400,6 +1462,9 @@ async function fileInboxItem(supabase: any, inbox: any, classification: any) {
 }
 
 async function processInbox(supabase: any, force = false, limit = 20) {
+  const startTime = Date.now();
+  const maxDurationMs = 50000; // Stop if exceeding 50s total
+
   const cutoffIso = new Date(Date.now() - AUTO_PROCESS_AFTER_MS).toISOString();
   let query = supabase
     .from("gtd_inbox")
@@ -1419,9 +1484,9 @@ async function processInbox(supabase: any, force = false, limit = 20) {
   const projectCatalog = await fetchProjectCatalog(supabase);
   let processed = 0;
   let schemaReviewsProposed = 0;
-  for (const item of items) {
+
+  const processItemWithClassification = async (item: any, classification: any) => {
     try {
-      const classification = await classifyInboxItem(supabase, item.raw_text, projectCatalog);
       const schemaReview = await reviewInboxSchemaNeed(supabase, item, classification).catch((err: any) => {
         console.error("[GTD] schema review failed:", err.message);
         return null;
@@ -1443,6 +1508,39 @@ async function processInbox(supabase: any, force = false, limit = 20) {
       processed++;
     } catch (err: any) {
       console.error("[GTD] process item failed:", err.message);
+    }
+  };
+
+  const remainingItems = [...items];
+  while (remainingItems.length > 0) {
+    if (Date.now() - startTime > maxDurationMs) {
+      console.warn(`[GTD] processInbox: reaching timeout (${Date.now() - startTime}ms), stopping early.`);
+      break;
+    }
+
+    const batch = remainingItems.splice(0, 5); // Use smaller batches of 5 for safety
+    try {
+      const classifications = await classifyInboxBatch(supabase, batch, projectCatalog);
+      for (const item of batch) {
+        const cls = classifications.find((c: any) => c.id === item.id);
+        if (cls) {
+          await processItemWithClassification(item, cls);
+        } else {
+          // Fallback for missing item in batch results
+          const singleCls = await classifyInboxItem(supabase, item.raw_text, projectCatalog);
+          await processItemWithClassification(item, singleCls);
+        }
+      }
+    } catch (err: any) {
+      console.error("[GTD] batch processing failed, falling back to sequential:", err.message);
+      for (const item of batch) {
+        try {
+          const singleCls = await classifyInboxItem(supabase, item.raw_text, projectCatalog);
+          await processItemWithClassification(item, singleCls);
+        } catch (singleErr: any) {
+          console.error(`[GTD] sequential fallback failed for item ${item.id}:`, singleErr.message);
+        }
+      }
     }
   }
 
@@ -1583,7 +1681,7 @@ async function openAIChat(messages: any[], maxTokens = 300, openRouterKey?: stri
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  }, 25000);
+  }, 60000);
 
   if (!res.ok) {
     const errorText = await res.text();
@@ -1625,7 +1723,7 @@ async function buildContext(supabase: any): Promise<string> {
     supabase.from("gtd_inbox").select("raw_text,life_domain").eq("processed", false).limit(5),
     supabase.from("gtd_actions").select("title,delegated_to,life_domain").eq("status", "waiting").limit(5),
     supabase.from("ventures").select("name,status,readiness_score,risk_level,monthly_revenue_usd").eq("status", "active").order("readiness_score", { ascending: false }),
-    supabase.from("ceo_recommendations").select("title,priority,type").eq("status", "new").in("priority", ["critical", "high"]).limit(3),
+    supabase.from("ceo_recommendations").select("title,priority,type").eq("status", "new").in("priority", ["critical", "high"]).order("generated_at", { ascending: false }).limit(3),
     getPendingSchemaReviewSummary(supabase, 3),
   ]);
 
@@ -1739,7 +1837,7 @@ async function buildMoneypennyReviewPayload(supabase: any, window: "morning" | "
     supabase.from("gtd_actions").select("title,delegated_to,due_date,life_domain").eq("status", "waiting").order("due_date", { ascending: true }).limit(5),
     supabase.from("gtd_inbox").select("raw_text,created_at,life_domain").eq("processed", false).order("created_at", { ascending: true }).limit(4),
     supabase.from("calendar_events").select("title,start_at,end_at,all_day,location,status,life_domain,ventures(name)").neq("status", "cancelled").lte("start_at", horizon.toISOString()).order("start_at", { ascending: true }).limit(20),
-    supabase.from("ceo_recommendations").select("title,priority").eq("status", "new").in("priority", ["critical", "high"]).limit(3),
+    supabase.from("ceo_recommendations").select("title,priority").eq("status", "new").in("priority", ["critical", "high"]).order("generated_at", { ascending: false }).limit(3),
     getPendingSchemaReviewSummary(supabase, 3),
   ]);
 
@@ -2209,110 +2307,6 @@ async function handleTelegramMessage(botName: string, message: any) {
   }
   return;
 
-  if (role === "filer") {
-    if (text === "/process" || text === "/p" || text === "/file") {
-      const result = supabase ? await processInbox(supabase, true, 20) : { processed: 0, total: 0 };
-      await tgSend(
-        token,
-        chatId,
-        result.total > 0
-          ? `📋 Processed ${result.processed} of ${result.total} inbox items.`
-          : "📋 Nothing waiting in the inbox right now."
-      );
-      return;
-    }
-    if (text === "/wn") {
-      const { data } = supabase
-        ? await supabase.from("gtd_inbox").select("raw_text").eq("processed", false).order("created_at", { ascending: true }).limit(1)
-        : { data: null };
-      const nextItem = data?.[0]?.raw_text;
-      await tgSend(
-        token,
-        chatId,
-        nextItem
-          ? `📋 Next in the stack: "${nextItem.substring(0, 120)}${nextItem.length > 120 ? "…" : ""}"\n\nSend /process when you're ready to file it.`
-          : "📋 Inbox is clear. Nothing waiting on me right now."
-      );
-      return;
-    }
-    if (text === "/status") {
-      let msg = "📊 Inbox status unavailable (no Supabase connection).";
-      if (supabase) {
-        const { data } = await supabase.from("gtd_inbox").select("id").eq("processed", false);
-        msg = `📋 ${data?.length || 0} items in inbox awaiting processing. Send /process to file them now.`;
-      }
-      await tgSend(token, chatId, msg);
-      return;
-    }
-    await tgSend(token, chatId, getRadarConfirmation(text));
-    return;
-  }
-
-  if (role === "ceo" && (text === "/briefing" || text === "/portfolio" || text === "/wn")) {
-    let context = "(no data)";
-    if (supabase) {
-      try { context = await withTimeout(buildContext(supabase), 5000, "Supabase context"); } catch {}
-    }
-    const { content } = await openAIChat([
-      { role: "system", content: getSystemPrompt("ceo", context) },
-      {
-        role: "user",
-        content: text === "/wn"
-          ? "What's next? Give me the single next move that deserves my attention now, from a CEO and portfolio perspective, in Jed Bartlet's brisk move-the-meeting-forward style."
-          : "Give me a brief portfolio status. What demands my attention?",
-      },
-    ], 1024);
-    await tgSend(token, chatId, content);
-    return;
-  }
-
-  if ((text === "/briefing" || text === "/b" || text === "/wn") && (role === "assistant" || role === "moneypenny")) {
-    let context = "(no data)";
-    if (supabase) {
-      try { context = await withTimeout(buildContext(supabase), 5000, "Supabase context"); } catch {}
-    }
-    const { content } = await openAIChat([
-      { role: "system", content: getSystemPrompt(role, context) },
-      {
-        role: "user",
-        content: text === "/wn"
-          ? "What's next? Give me the single next immediate thing to do right now, with one brief sentence on why."
-          : "Give me my briefing for today. Top 3 things. Under 100 words.",
-      },
-    ], 1024);
-    await tgSend(token, chatId, content);
-    return;
-  }
-
-  let context = "(Supabase not configured)";
-  if (supabase) {
-    try { context = await withTimeout(buildContext(supabase), 5000, "Supabase context"); } catch {}
-  }
-
-  const { content: reply } = await openAIChat([
-    { role: "system", content: getSystemPrompt(role, context) },
-    { role: "user", content: text },
-  ], 800);
-
-  await tgSend(token, chatId, reply);
-
-  if (supabase) {
-    maybeLogBusinessMemory(supabase, {
-      source: "telegram",
-      agentName: role,
-      systemPrompt: getSystemPrompt(role, context),
-      userMessage: text,
-      assistantReply: reply,
-    });
-    logAgentEvent(supabase, {
-      agentName: `telegram_${role}_${botName}`,
-      action: "chat",
-      inputSummary: text.substring(0, 100),
-      outputSummary: reply.substring(0, 100),
-      modelUsed: GEMINI_MODEL,
-      success: true,
-    }).catch(() => {});
-  }
 }
 
 const EA_BASE = `You are the Executive Assistant for Welday Enterprises — sharp, efficient, tactical.
@@ -2524,6 +2518,17 @@ export function registerRoutes(httpServer: Server, app: Express) {
           ...result,
           force,
         });
+  });
+
+  app.get("/api/reference", async (_req, res) => {
+    const supabase = getSupabase();
+    if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+    const { data, error } = await supabase
+      .from("gtd_reference")
+      .select("*, ventures(name, slug), gtd_projects(title)")
+      .order("created_at", { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(data || []);
   });
 
   app.post("/api/gtd/process", async (req, res) => {

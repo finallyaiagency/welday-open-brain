@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchPortfolioStats, fetchVentures, fetchCeoRecs, fetchActions } from "@/lib/supabaseQueries";
+import { fetchPortfolioStats, fetchVentures, fetchCeoRecs, fetchActions, fetchCalendarEvents, fetchWaitingActions } from "@/lib/supabaseQueries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -7,7 +7,9 @@ import { Link } from "wouter";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell
 } from "recharts";
-import { TrendingUp, Users, Zap, Activity, ArrowRight, AlertTriangle } from "lucide-react";
+import { TrendingUp, Users, Zap, Activity, ArrowRight, AlertTriangle, Clock, Calendar } from "lucide-react";
+import { format, parseISO, isSameDay } from "date-fns";
+import { CalendarEventRow } from "@/components/CalendarEventRow";
 import type { Venture } from "@shared/schema";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -81,10 +83,27 @@ export function OverviewPage() {
     queryFn: () => fetchActions("active"),
   });
 
+  const { data: calendarEvents = [] } = useQuery({
+    queryKey: ["/api/calendar/events"],
+    queryFn: fetchCalendarEvents,
+  });
+
+  const { data: waiting = [] } = useQuery({
+    queryKey: ["/api/actions", "waiting-list"],
+    queryFn: fetchWaitingActions,
+  });
+
   const urgentActions = actions.filter((a: any) => a.dueDate && new Date(a.dueDate) <= new Date(Date.now() + 86400000 * 3));
+  const upcomingEvents = calendarEvents.filter((e: any) => {
+    const d = new Date(e.start_at);
+    const now = new Date();
+    const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    return d >= now && d <= weekFromNow;
+  }).sort((a: any, b: any) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime());
 
   return (
     <div className="p-6 space-y-6">
+      {/* ... header and KPI cards ... */}
       <div>
         <h1 className="text-xl font-semibold">Portfolio Overview</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
@@ -156,28 +175,24 @@ export function OverviewPage() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Due Soon</CardTitle>
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Calendar size={14} className="text-amber-500" /> Upcoming Schedule
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1.5 pb-3">
-            {urgentActions.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-2 text-center">Nothing urgent - you're clear</p>
+          <CardContent className="space-y-0 pb-3">
+            {upcomingEvents.length === 0 ? (
+              <p className="text-[10px] text-muted-foreground py-4 text-center italic">No upcoming events</p>
             ) : (
-              urgentActions.slice(0, 6).map((a: any) => (
-                <div key={a.id} data-testid={`action-${a.id}`} className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
-                  <span className="text-xs flex-1 truncate">{a.title}</span>
-                  <span className="text-[10px] text-muted-foreground tabular">
-                    {a.dueDate ? new Date(a.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "-"}
-                  </span>
-                </div>
+              upcomingEvents.slice(0, 5).map((e: any) => (
+                <CalendarEventRow key={e.id} event={e} showDate={true} />
               ))
             )}
             <Link href="/gtd">
-              <a className="flex items-center gap-1 text-xs text-primary hover:underline mt-1">
-                Open GTD <ArrowRight size={11} />
+              <a className="flex items-center gap-1 text-[10px] text-primary hover:underline mt-2">
+                GTD Calendar <ArrowRight size={10} />
               </a>
             </Link>
           </CardContent>
@@ -185,22 +200,46 @@ export function OverviewPage() {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Active Ventures</CardTitle>
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+               <AlertTriangle size={14} className="text-purple-500" /> Waiting On
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1.5 pb-3">
-            {ventures.filter((v: Venture) => v.status === "active").map((v: Venture) => (
-              <div key={v.id} data-testid={`venture-row-${v.slug}`} className="flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
-                <span className="text-xs flex-1 truncate font-medium">{v.name}</span>
-                <div className="w-16 bg-secondary rounded-sm h-1">
-                  <div className="readiness-bar" style={{ width: `${v.readinessScore}%` }} />
+          <CardContent className="space-y-2 pb-3">
+             {waiting.length === 0 ? (
+               <p className="text-[10px] text-muted-foreground py-4 text-center italic">Nothing pending</p>
+             ) : (
+               waiting.slice(0, 4).map((a: any) => (
+                 <div key={a.id} className="flex items-center gap-2">
+                   <div className="w-1 h-1 rounded-full bg-purple-400" />
+                   <span className="text-[11px] flex-1 truncate font-medium">{a.title}</span>
+                   {a.delegatedTo && <Badge className="text-[8px] h-3 px-1">@{a.delegatedTo}</Badge>}
+                 </div>
+               ))
+             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium italic">Next Up</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 pb-3">
+            {urgentActions.length === 0 ? (
+              <p className="text-[10px] text-muted-foreground py-4 text-center italic">Inbox clear ✓</p>
+            ) : (
+              urgentActions.slice(0, 4).map((a: any) => (
+                <div key={a.id} data-testid={`action-${a.id}`} className="flex items-center gap-2">
+                  <div className="w-1 h-1 rounded-full bg-green-400" />
+                  <span className="text-[11px] flex-1 truncate font-medium">{a.title}</span>
+                  <span className="text-[9px] text-muted-foreground tabular">
+                    {a.dueDate ? new Date(a.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "-"}
+                  </span>
                 </div>
-                <span className="text-[10px] text-muted-foreground tabular w-6">{v.readinessScore}%</span>
-              </div>
-            ))}
-            <Link href="/ventures">
-              <a className="flex items-center gap-1 text-xs text-primary hover:underline mt-1">
-                All ventures <ArrowRight size={11} />
+              ))
+            )}
+            <Link href="/gtd">
+              <a className="flex items-center gap-1 text-[10px] text-primary hover:underline mt-1">
+                Full GTD Dashboard <ArrowRight size={10} />
               </a>
             </Link>
           </CardContent>

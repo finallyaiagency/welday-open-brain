@@ -19,6 +19,7 @@ import {
   ClipboardList,
   Inbox,
   Calendar,
+  Bookmark,
 } from "lucide-react";
 
 type SearchResult = {
@@ -29,6 +30,7 @@ type SearchResult = {
   conversationLogs: any[];
   inboxItems: any[];
   calendarEvents: any[];
+  references: any[];
 };
 
 const CHART_COLORS = ["hsl(186 85% 52%)", "#22c55e", "#f59e0b", "#3b82f6", "#a855f7", "#ef4444"];
@@ -144,6 +146,7 @@ export function SearchPage() {
     conversationLogs: results.conversationLogs.filter((item: any) => lifeDomain === "all" || (item.life_domain || "unknown") === lifeDomain),
     inboxItems: results.inboxItems.filter((item: any) => lifeDomain === "all" || (item.life_domain || "unknown") === lifeDomain),
     calendarEvents: results.calendarEvents.filter((item: any) => lifeDomain === "all" || (item.life_domain || "unknown") === lifeDomain),
+    references: results.references,
   } : null;
 
   const totalResults = filteredResults
@@ -154,6 +157,7 @@ export function SearchPage() {
       + filteredResults.conversationLogs.length
       + filteredResults.inboxItems.length
       + filteredResults.calendarEvents.length
+      + filteredResults.references.length
     : 0;
 
   const showCharts = scope === "all" && filteredResults && (filteredResults.ventures.length > 1 || filteredResults.actions.length > 1);
@@ -335,7 +339,11 @@ export function SearchPage() {
                     {event.start_at && <span className="text-[10px] text-muted-foreground">{new Date(event.start_at).toLocaleString()}</span>}
                   </div>
                   <p className="mt-1 text-sm font-medium">{event.title}</p>
-                  {event.description && <p className="mt-1 text-xs text-muted-foreground">{event.description}</p>}
+                  {event.description && (
+                    <p className="mt-1 text-[11px] text-muted-foreground whitespace-pre-line leading-relaxed">
+                      {event.description.replace(/\\n/g, "\n")}
+                    </p>
+                  )}
                 </div>
               )}
             />
@@ -393,6 +401,25 @@ export function SearchPage() {
                   <div className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-purple-400" />
                   <span className="flex-1 text-sm">{recommendation.title}</span>
                   <Badge variant="outline" className={`text-[10px] priority-${recommendation.priority}`}>{recommendation.priority}</Badge>
+                  {recommendation.generated_at && <span className="text-[10px] text-muted-foreground ml-auto">{new Date(recommendation.generated_at).toLocaleDateString()}</span>}
+                </div>
+              )}
+            />
+
+            <ResultSection
+              title="References"
+              icon={Bookmark}
+              items={filteredResults.references}
+              renderItem={(ref) => (
+                <div key={ref.id} data-testid={`search-ref-${ref.id}`} className="rounded-md border border-border p-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="text-[10px] uppercase tracking-wide">{ref.category || "general"}</Badge>
+                    {ref.area && <Badge variant="outline" className="text-[10px] capitalize">{ref.area}</Badge>}
+                    {ref.created_at && <span className="text-[10px] text-muted-foreground">{new Date(ref.created_at).toLocaleString()}</span>}
+                  </div>
+                  <p className="mt-1 text-sm font-medium">{ref.title}</p>
+                  {ref.content && <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{ref.content}</p>}
+                  {ref.url && <p className="mt-1 text-[10px] text-primary truncate">{ref.url}</p>}
                 </div>
               )}
             />

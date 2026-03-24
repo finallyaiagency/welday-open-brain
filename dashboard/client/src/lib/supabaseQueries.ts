@@ -1,5 +1,5 @@
 import { getSession, supabase } from "./supabase";
-import type { Venture, GtdInbox, GtdAction, GtdProject, CeoRecommendation, AgentLog, BusinessMemory, SchemaChangelog } from "@shared/schema";
+import type { Venture, GtdInbox, GtdAction, GtdProject, GtdReference, CeoRecommendation, AgentLog, BusinessMemory, SchemaChangelog, GtdSomeday } from "@shared/schema";
 import { contextToHashtag, extractHashtags, mergeHashtags, normalizeHashtag } from "@shared/hashtags";
 
 type RawVenture = {
@@ -159,6 +159,37 @@ type RawCalendarEvent = {
   source?: string | null;
 };
 
+type RawReference = {
+  id: string;
+  title: string;
+  content: string| null;
+  url: string | null;
+  project_id: string | null;
+  venture_id: string | null;
+  area: string | null;
+  category: string | null;
+  tags: string[] | null;
+  created_at: string | null;
+  updated_at: string | null;
+  ventures?: { name: string; slug: string } | null;
+  gtd_projects?: { title: string } | null;
+};
+
+type RawSomeday = {
+  id: string;
+  title: string;
+  description: string | null;
+  venture_id: string | null;
+  area: string | null;
+  review_date: string | null;
+  promoted_to: string | null;
+  promoted_item_id: string | null;
+  is_archived: boolean | null;
+  tags: string[] | null;
+  created_at: string | null;
+  ventures?: { name: string; slug: string } | null;
+};
+
 function normalizeLifeDomain(value: string | null | undefined, fallback?: { ventureId?: string | null; area?: string | null; eventType?: string | null; ventureSlugs?: string[] | null }) {
   if (value === "business" || value === "personal" || value === "unknown") return value;
   if (fallback?.ventureId) return "business";
@@ -311,6 +342,40 @@ function mapCeoRecommendation(row: RawCeoRecommendation): CeoRecommendation {
     acknowledgedAt: row.acknowledged_at as any,
     completedAt: row.completed_at as any,
     notes: row.notes,
+  };
+}
+
+function mapReference(row: RawReference): GtdReference & { ventures?: { name: string; slug: string } | null; gtd_projects?: { title: string } | null } {
+  return {
+    id: row.id,
+    title: row.title,
+    content: row.content,
+    url: row.url,
+    projectId: row.project_id,
+    ventureId: row.venture_id,
+    area: row.area,
+    category: row.category || "general",
+    tags: row.tags,
+    createdAt: row.created_at as any,
+    updatedAt: row.updated_at as any,
+    ventures: row.ventures || null,
+    gtd_projects: row.gtd_projects || null,
+  };
+}
+
+function mapSomeday(row: RawSomeday): GtdSomeday {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    ventureId: row.venture_id,
+    area: row.area,
+    reviewDate: row.review_date,
+    promotedTo: row.promoted_to,
+    promotedItemId: row.promoted_item_id,
+    isArchived: row.is_archived,
+    tags: row.tags,
+    createdAt: row.created_at as any,
   };
 }
 
@@ -500,6 +565,38 @@ export async function fetchActions(status = "active"): Promise<GtdAction[]> {
   return ((data as RawAction[] | null) || []).map(mapAction);
 }
 
+export async function fetchWaitingActions(): Promise<GtdAction[]> {
+  const { data, error } = await supabase
+    .from("gtd_actions")
+    .select("*, gtd_projects(title), ventures(name, slug)")
+    .neq("status", "completed")
+    .neq("status", "cancelled")
+    .or("status.eq.waiting,status.eq.delegated,context.eq.@waiting")
+    .order("due_date", { ascending: true, nullsFirst: false });
+  if (error) throw error;
+  return ((data as RawAction[] | null) || []).map(mapAction);
+}
+
+export async function fetchReferences(): Promise<GtdReference[]> {
+  const { data, error } = await supabase
+    .from("gtd_reference")
+    .select("*, ventures(name, slug), gtd_projects(title)")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return ((data as RawReference[] | null) || []).map(mapReference);
+}
+
+export async function fetchSomeday(): Promise<GtdSomeday[]> {
+  const { data, error } = await supabase
+    .from("gtd_someday")
+    .select("*, ventures(name, slug)")
+    .eq("is_archived", false)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return ((data as RawSomeday[] | null) || []).map(mapSomeday);
+}
+
+
 export async function completeAction(id: string) {
   const { error } = await supabase
     .from("gtd_actions")
@@ -629,7 +726,7 @@ export async function fetchPortfolioStats() {
 
 export async function searchAll(query: string, scope = "all") {
   const q = query.trim();
-  if (!q) return { ventures: [], actions: [], projects: [], recommendations: [], conversationLogs: [], inboxItems: [], calendarEvents: [] };
+  if (!q) return { ventures: [], actions: [], projects: [], recommendations: [], conversationLogs: [], inboxItems: [], calendarEvents: [], references: [] };
 
   const like = `%${q}%`;
   const tagQuery = q.startsWith("#") || !/\s/.test(q) ? normalizeHashtag(q) : null;
@@ -638,7 +735,7 @@ export async function searchAll(query: string, scope = "all") {
   const includeInbox = includeEverything || scope === "inbox";
   const includeCalendar = includeEverything || scope === "calendar";
 
-  const [ventureName, ventureDescription, ventureNotes, actions, actionTags, projects, projectTags, recTitle, recBody, conversationSummary, conversationTopics, inboxText, inboxTags, calendarTitle, calendarDescription] = await Promise.all([
+  const [ventureName, ventureDescription, ventureNotes, actions, actionTags, projects, projectTags, recTitle, recBody, conversationSummary, conversationTopics, inboxText, inboxTags, calendarTitle, calendarDescription, refTitle, refContent, refTags] = await Promise.all([
     includeEverything
       ? supabase
           .from("ventures")
@@ -693,14 +790,14 @@ export async function searchAll(query: string, scope = "all") {
     includeEverything
       ? supabase
           .from("ceo_recommendations")
-          .select("id, title, type, priority, status")
+          .select("id, title, type, priority, status, generated_at")
           .ilike("title", like)
           .limit(5)
       : Promise.resolve({ data: [], error: null }),
     includeEverything
       ? supabase
           .from("ceo_recommendations")
-          .select("id, title, type, priority, status")
+          .select("id, title, type, priority, status, generated_at")
           .ilike("body", like)
           .limit(5)
       : Promise.resolve({ data: [], error: null }),
@@ -746,6 +843,27 @@ export async function searchAll(query: string, scope = "all") {
           .ilike("description", like)
           .limit(20)
       : Promise.resolve({ data: [], error: null }),
+    includeEverything
+      ? supabase
+          .from("gtd_reference")
+          .select("*, ventures(name, slug), gtd_projects(title)")
+          .ilike("title", like)
+          .limit(10)
+      : Promise.resolve({ data: [], error: null }),
+    includeEverything
+      ? supabase
+          .from("gtd_reference")
+          .select("*, ventures(name, slug), gtd_projects(title)")
+          .ilike("content", like)
+          .limit(10)
+      : Promise.resolve({ data: [], error: null }),
+    includeEverything && tagQuery
+      ? supabase
+          .from("gtd_reference")
+          .select("*, ventures(name, slug), gtd_projects(title)")
+          .contains("tags", [tagQuery])
+          .limit(10)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   const queryErrors = [
@@ -764,6 +882,9 @@ export async function searchAll(query: string, scope = "all") {
     inboxTags.error,
     calendarTitle.error,
     calendarDescription.error,
+    refTitle.error,
+    refContent.error,
+    refTags.error,
   ].filter(Boolean);
   if (queryErrors.length > 0) {
     throw queryErrors[0];
@@ -790,6 +911,11 @@ export async function searchAll(query: string, scope = "all") {
       (calendarTitle.data as RawCalendarEvent[] | null) || [],
       (calendarDescription.data as RawCalendarEvent[] | null) || [],
     ).slice(0, 20),
+    references: mergeUniqueById(
+      (refTitle.data as RawReference[] | null) || [],
+      (refContent.data as RawReference[] | null) || [],
+      (refTags.data as RawReference[] | null) || [],
+    ).slice(0, 20),
   };
 }
 export async function fetchCalendarEvents(): Promise<RawCalendarEvent[]> {
@@ -803,18 +929,20 @@ export async function fetchCalendarEvents(): Promise<RawCalendarEvent[]> {
 
 export async function fetchAllHashtags(): Promise<string[]> {
   // Fetch tags from projects, actions, and inbox
-  const [projects, actions, inbox] = await Promise.all([
+  const [projects, actions, inbox, references] = await Promise.all([
     supabase.from("gtd_projects").select("tags"),
     supabase.from("gtd_actions").select("tags"),
-    supabase.from("gtd_inbox").select("tags")
+    supabase.from("gtd_inbox").select("tags"),
+    supabase.from("gtd_reference").select("tags")
   ]);
 
   if (projects.error) throw projects.error;
   if (actions.error) throw actions.error;
   if (inbox.error) throw inbox.error;
+  if (references.error) throw references.error;
 
   const allTags = new Set<string>();
-  [projects.data, actions.data, inbox.data].forEach(group => {
+  [projects.data, actions.data, inbox.data, references.data].forEach(group => {
     group?.forEach((item: any) => {
       item.tags?.forEach((tag: string) => allTags.add(tag));
     });

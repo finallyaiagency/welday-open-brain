@@ -57,9 +57,7 @@ app.use((req, res, next) => {
     }
   });
 
-  log(`Supabase URL: ${process.env.VITE_SUPABASE_URL}`);
-  log(`Supabase KEY length: ${process.env.VITE_SUPABASE_ANON_KEY?.length || 0}`);
-  
+
   next();
 });
 

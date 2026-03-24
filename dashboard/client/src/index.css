@@ -132,3 +132,16 @@
 .priority-high { @apply text-orange-400; }
 .priority-medium { @apply text-amber-400; }
 .priority-low { @apply text-muted-foreground; }
+ 
+ /* ── Custom Utilities ── */
+ .no-scrollbar::-webkit-scrollbar {
+   display: none;
+ }
+ .no-scrollbar {
+   -ms-overflow-style: none;
+   scrollbar-width: none;
+ }
+ 
+ .text-glow-sm {
+   text-shadow: 0 0 8px hsl(var(--primary) / 0.5);
+ }

@@ -61,17 +61,22 @@ async function callGemini(prompt) {
 
 async function classifyItem(text) {
   const now = new Date().toISOString();
-  const prompt = `Classify this GTD inbox item and tell me where to file it. Current time is ${now}.
-
+  const prompt = `Classify this GTD inbox item and tell me where to file it. Current time (UTC) is ${now}.
+  
 Inbox text: "${text}"
 
 GTD destinations:
-- action: A concrete next step (do in <2min, or schedule)
-- project: Outcome requiring multiple steps
-- someday: Idea to revisit later
-- reference: Information to keep (not actionable)
-- calendar: A scheduled appointment or event with a specific time or date (priority even if it sounds like an action).
-- trash: Not worth keeping
+- calendar: MANDATORY for anything with a fixed time or specific appointment duration. (e.g., "meeting at 3", "dentist tomorrow", "noon to one Saturday", "Friday morning", "8-9pm"). If it has a time, it is NOT an action—it is a calendar event.
+- action: A concrete next step. Use this for tasks that *could* be done at any time but might have a deadline (due date). If a specific time-of-day is mentioned for when it MUST happen, use 'calendar' instead.
+- project: Outcome requiring multiple steps.
+- someday: Idea to revisit later.
+- reference: Information to keep (not actionable).
+- trash: Not worth keeping.
+
+EXAMPLES:
+- "Add an appointment for this Saturday. Noon to one eat lunch during class." -> {"destination": "calendar", "title": "Lunch during class", "start_at": "[Saturday 12:00 UTC]", "end_at": "[Saturday 13:00 UTC]"}
+- "Call mom tomorrow" -> {"destination": "action", "title": "Call mom"}
+- "Dinner at 7pm tonight" -> {"destination": "calendar", "title": "Dinner"}
 
 Respond with JSON only:
 {
@@ -88,11 +93,29 @@ Respond with JSON only:
 }`;
 
   const content = await callGemini(prompt);
+  let classification;
   try {
-    return JSON.parse(content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
+    classification = JSON.parse(content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
   } catch {
-    return { destination: 'reference', title: text.substring(0, 80), confidence: 0.5 };
+    classification = { destination: 'reference', title: text.substring(0, 80), confidence: 0.5 };
   }
+
+  // ── Safety override: if the text has an explicit time-of-day pattern, force calendar ──
+  // This catches cases where the AI still returns 'action' despite a clear appointment.
+  const TIME_PATTERNS = [
+    /\b\d{1,2}:\d{2}\s*(am|pm)\b/i,             // "2:00 PM", "10:30 am"
+    /\b\d{1,2}\s*(am|pm)\s*to\s*\d{1,2}(:\d{2})?\s*(am|pm)\b/i,  // "2 pm to 3 pm"
+    /\b\d{1,2}-\d{1,2}\s*(am|pm)\b/i,           // "8-9pm"
+    /\bnoon\s+to\s+\w+/i,                        // "noon to one"
+    /\b(appt|appointment|meeting|calendar)\b/i,  // explicit appointment keywords
+  ];
+  const hasTimePattern = TIME_PATTERNS.some(re => re.test(text));
+  if (hasTimePattern && classification.destination !== 'calendar') {
+    console.log(`  [override] "${text.substring(0, 60)}" reclassified: ${classification.destination} → calendar`);
+    classification.destination = 'calendar';
+  }
+
+  return classification;
 }
 
 async function fileItem(inbox, classification) {

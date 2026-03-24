@@ -19,6 +19,8 @@ import { InboxPage } from "@/pages/InboxPage";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { ModelsPage } from "@/pages/ModelsPage";
+import { CalendarPage } from "@/pages/CalendarPage";
+import { ReferencePage } from "@/pages/ReferencePage";
 import NotFound from "@/pages/not-found";
 
 function AppRoutes() {
@@ -33,6 +35,8 @@ function AppRoutes() {
         <Route path="/search" component={SearchPage} />
         <Route path="/inbox" component={InboxPage} />
         <Route path="/review" component={ReviewPage} />
+        <Route path="/calendar" component={CalendarPage} />
+        <Route path="/references" component={ReferencePage} />
         <Route path="/settings" component={SettingsPage} />
         <Route path="/models" component={ModelsPage} />
         <Route component={NotFound} />

@@ -133,6 +133,7 @@ Focus on SYNERGIES first — how can 2+ ventures share content, users, or infras
         estimated_revenue_impact: r.estimated_revenue_impact,
         action_items: r.action_items || [],
         ai_model_used: GEMINI_MODEL,
+        generated_at: new Date().toISOString(),
         status: 'new',
       }));
 
@@ -164,7 +165,5 @@ Focus on SYNERGIES first — how can 2+ ventures share content, users, or infras
     }), 3000, "Agent Error Log Insert").catch(() => {});
   }
 }
-
-runCEO();
 
 runCEO();

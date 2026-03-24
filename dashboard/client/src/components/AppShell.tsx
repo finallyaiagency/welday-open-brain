@@ -4,8 +4,8 @@ import { signOut } from "@/lib/supabase";
 import { useQuery } from "@tanstack/react-query";
 import { fetchSchemaReviewCount } from "@/lib/supabaseQueries";
 import {
-  LayoutDashboard, Briefcase, CheckSquare, Brain,
-  Search, Inbox, Settings, Sun, Moon, LogOut, Zap, Activity, ShieldCheck
+  LayoutDashboard, Briefcase, CheckSquare, Brain, Calendar,
+  Search, Inbox, Settings, Sun, Moon, LogOut, Zap, Activity, ShieldCheck, Bookmark
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -14,6 +14,8 @@ const NAV_ITEMS = [
   { href: "/assistant",  label: "Assistant",   icon: Zap,   highlight: true },
   { href: "/ceo",        label: "Virtual CEO", icon: Brain },
   { href: "/gtd",        label: "GTD",         icon: CheckSquare },
+  { href: "/calendar",   label: "Calendar",    icon: Calendar },
+  { href: "/references", label: "References",  icon: Bookmark },
   { href: "/inbox",      label: "Inbox",       icon: Inbox },
   { href: "/review",     label: "Review",      icon: ShieldCheck },
   { href: "/search",     label: "Search",      icon: Search },
