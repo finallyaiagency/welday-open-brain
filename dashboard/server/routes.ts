@@ -135,7 +135,7 @@ async function getAuthenticatedAdminEmail(req: any) {
 }
 
 const GEMINI_MODEL = "gemini-3.1-flash-lite-preview";
-const AUTO_PROCESS_AFTER_MS = 10 * 60 * 1000;
+const AUTO_PROCESS_AFTER_MS = 30 * 1000;
 const USER_TIMEZONE = "America/New_York";
 const GEMINI_EMBEDDING_MODEL = "text-embedding-004";
 const GEMINI_EMBEDDING_DIMENSIONS = 768;
@@ -192,6 +192,9 @@ async function logAgentEvent(supabase: any, params: {
   success?: boolean;
   errorMessage?: string;
   modelUsed?: string;
+  tablesRead?: string[];
+  tablesWritten?: string[];
+  durationMs?: number;
 }) {
   await supabase.from("agent_logs").insert({
     agent_name: params.agentName,
@@ -201,6 +204,9 @@ async function logAgentEvent(supabase: any, params: {
     success: params.success ?? true,
     error_message: params.errorMessage,
     model_used: params.modelUsed,
+    tables_read: params.tablesRead,
+    tables_written: params.tablesWritten,
+    duration_ms: params.durationMs,
   });
 }
 
@@ -1552,6 +1558,20 @@ async function processInbox(supabase: any, force = false, limit = 20) {
     }
   }
 
+  if (processed > 0) {
+    await logAgentEvent(supabase, {
+      agentName: "gtd_filer",
+      action: "process_inbox",
+      inputSummary: `${items.length} inbox items`,
+      outputSummary: `Processed ${processed} items`,
+      modelUsed: GEMINI_MODEL,
+      success: true,
+      tablesRead: ["gtd_inbox", "ventures"],
+      tablesWritten: ["gtd_actions", "gtd_projects", "gtd_someday", "gtd_reference", "calendar_events", "gtd_inbox"],
+      durationMs: Date.now() - startTime,
+    }).catch(() => {});
+  }
+
   return { processed, total: items.length, schemaReviewsProposed };
 }
 
@@ -1568,12 +1588,9 @@ function isForcedProcessRequest(input: any) {
   return input === true || input === "true" || input === 1 || input === "1";
 }
 
-function isAuthorizedProcessRequest(req: any) {
+async function isAuthorizedProcessRequest(req: any): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const githubSecret = process.env.GTD_PROCESS_SECRET;
   const cronSecret = process.env.CRON_SECRET;
-  if (!githubSecret && !cronSecret) {
-    return { ok: false, status: 500, error: "GTD_PROCESS_SECRET or CRON_SECRET not configured" };
-  }
 
   const providedHeader = req.header?.("x-cron-secret") || req.headers?.["x-cron-secret"];
   if (githubSecret && providedHeader === githubSecret) {
@@ -1583,6 +1600,18 @@ function isAuthorizedProcessRequest(req: any) {
   const authorization = req.header?.("authorization") || req.headers?.authorization;
   if (cronSecret && authorization === `Bearer ${cronSecret}`) {
     return { ok: true as const };
+  }
+
+  // Also check if they are a logged-in admin from the dashboard
+  try {
+    const adminEmail = await getAuthenticatedAdminEmail(req);
+    if (adminEmail) return { ok: true as const };
+  } catch (err: any) {
+    console.error("[GTD] auth check failed:", err.message);
+  }
+
+  if (!githubSecret && !cronSecret) {
+    return { ok: false, status: 500, error: "GTD_PROCESS_SECRET or CRON_SECRET not configured" };
   }
 
   return { ok: false, status: 401, error: "Unauthorized" };
@@ -2398,7 +2427,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.post("/api/moneypenny/review", async (req, res) => {
-    const auth = isAuthorizedProcessRequest(req);
+    const auth = await isAuthorizedProcessRequest(req);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
     const supabase = getSupabase();
@@ -2441,7 +2470,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.post("/api/bot-memory/embed", async (req, res) => {
-    const auth = isAuthorizedProcessRequest(req);
+    const auth = await isAuthorizedProcessRequest(req);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
     const supabase = getSupabase();
@@ -2504,7 +2533,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.get("/api/gtd/process", async (req, res) => {
-    const auth = isAuthorizedProcessRequest(req);
+    const auth = await isAuthorizedProcessRequest(req);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
     const supabase = getSupabase();
@@ -2515,17 +2544,58 @@ export function registerRoutes(httpServer: Server, app: Express) {
       ? {
           message: force
             ? `Processed ${result.processed} of ${result.total} inbox items immediately.`
-            : `Processed ${result.processed} of ${result.total} inbox items older than 10 minutes.`,
+            : `Processed ${result.processed} of ${result.total} inbox items older than 30 seconds.`,
           ...result,
           force,
         }
       : {
           message: force
             ? "Nothing waiting in the inbox right now."
-            : "No inbox items older than 10 minutes were waiting.",
+            : "No inbox items older than 30 seconds were waiting.",
           ...result,
           force,
         });
+  });
+
+  app.post("/api/inbox/process/:id", async (req, res) => {
+    // Basic auth check
+    const auth = await isAuthorizedProcessRequest(req);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const { id } = req.params;
+    const supabase = getSupabase();
+    if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+
+    // Fetch the specific item
+    const { data: item, error } = await supabase
+      .from("gtd_inbox")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error || !item) {
+      return res.status(404).json({ error: "Inbox item not found" });
+    }
+
+    try {
+      const projectCatalog = await fetchProjectCatalog(supabase);
+      const classification = await classifyInboxItem(supabase, item.raw_text, projectCatalog);
+      await fileInboxItem(supabase, item, classification);
+      
+      await logAgentEvent(supabase, {
+        agentName: "gtd_filer",
+        action: "process_item",
+        inputSummary: item.raw_text.substring(0, 100),
+        outputSummary: `Filed to ${classification.destination}`,
+        modelUsed: GEMINI_MODEL,
+        success: true,
+      }).catch(() => {});
+
+      return res.json({ ok: true, classification });
+    } catch (err: any) {
+      console.error("[GTD] manual item process failed:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/reference", async (_req, res) => {
@@ -2564,7 +2634,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.post("/api/gtd/process", async (req, res) => {
-    const auth = isAuthorizedProcessRequest(req);
+    const auth = await isAuthorizedProcessRequest(req);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
     const supabase = getSupabase();

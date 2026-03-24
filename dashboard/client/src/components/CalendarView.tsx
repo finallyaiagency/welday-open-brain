@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, parseISO, isToday, startOfWeek, endOfWeek } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Trash2 } from "lucide-react";
@@ -9,6 +9,15 @@ import type { GtdAction } from "@shared/schema";
 
 export function CalendarView({ events, actions, onCompleteAction, onDeleteEvent }: { events: any[]; actions: GtdAction[]; onCompleteAction?: (id: string) => void, onDeleteEvent?: (id: string) => void }) {
   const [currentDate, setCurrentDate] = useState(new Date());
+  const todayRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (todayRef.current) {
+      setTimeout(() => {
+        todayRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 100);
+    }
+  }, [currentDate]);
 
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(monthStart);
@@ -69,7 +78,8 @@ export function CalendarView({ events, actions, onCompleteAction, onDeleteEvent 
             return (
               <div 
                 key={i} 
-                className={`bg-card p-2 transition-colors hover:bg-primary/[0.02] flex flex-col gap-1.5 overflow-hidden ${isCurrentMonth ? "" : "opacity-40 bg-muted/10"}`}
+                ref={isTodayDay ? todayRef : null}
+                className={`bg-card p-2 transition-colors hover:bg-primary/[0.02] flex flex-col gap-1.5 overflow-hidden ${isCurrentMonth ? "" : "opacity-40 bg-muted/10"} ${isTodayDay ? "ring-1 ring-inset ring-primary/20" : ""}`}
               >
                 <div className="flex items-center justify-between">
                   <span className={`text-xs font-semibold w-7 h-7 flex items-center justify-center rounded-full transition-colors ${isTodayDay ? "bg-primary text-primary-foreground shadow-md ring-2 ring-primary/20 ring-offset-1 ring-offset-background" : "text-muted-foreground hover:bg-muted"}`}>

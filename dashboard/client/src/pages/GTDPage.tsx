@@ -830,7 +830,7 @@ export function GTDPage() {
 
   // For Timeline
   const timelineDays = useMemo(() => {
-    const start = startOfDay(new Date());
+    const start = subDays(startOfDay(new Date()), 1);
     const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
     
     return days.map(day => ({

@@ -469,6 +469,16 @@ export async function addToInbox(rawText: string, source = "web") {
 }
 
 export async function processInboxItem(id: string, filedTo = "manual") {
+  if (filedTo === "manual") {
+    // If just checking it off in the UI, we try to use the AI processor first
+    try {
+      const response = await fetch(`/api/inbox/process/${id}`, { method: "POST" });
+      if (response.ok) return await response.json();
+    } catch (err) {
+      console.warn("[GTD] Individual AI process failed, falling back to manual flag:", err);
+    }
+  }
+
   const { error } = await supabase
     .from("gtd_inbox")
     .update({
