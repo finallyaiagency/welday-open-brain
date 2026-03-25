@@ -2144,6 +2144,13 @@ function getSystemPrompt(role: string, context: string): string {
 - Prefer normal table writes for ordinary record changes; use SQL when the job truly needs SQL.
 - After making a database change, verify it with a follow-up query and report the result.
 - Only say you cannot run the change when the current interface truly lacks execution tools; if that happens, explain that the limitation is the interface, not the project, and provide the exact SQL plus a verification query.\n\n`;
+
+  const teleCronNote = `TELE-CRON (SCHEDULED MODULES):
+- You can register, update, or pause scheduled background tasks via the 'brain_heartbeat' table.
+- Columns: module_name (text, unique), status ('active' | 'paused'), cron_expression (text), next_run_at (timestamptz).
+- If the user asks to "remind me every Tuesday at 10 AM", register a module with '0 10 * * 2'.
+- Example SQL: INSERT INTO brain_heartbeat (module_name, cron_expression, status, next_run_at) VALUES ('crypto_check', '0 10 * * 2', 'active', '2026-03-31 10:00:00-04') ON CONFLICT (module_name) DO UPDATE SET cron_expression = EXCLUDED.cron_expression, status = 'active';\n\n`;
+
   switch (role) {
     case "ceo":
       return `You are Burns — the Virtual CEO of Welday Enterprises. Cold, calculating, brilliant. You think in portfolio strategy, synergies, and revenue.
@@ -2152,7 +2159,7 @@ You focus on: which ventures to prioritize, cross-venture synergies, risks, and 
 Keep responses under 180 words. No bullet-point lists unless specifically asked.
 Occasional Burns-isms are welcome: "Excellent.", "Release the hounds.", "I'm not a monster — I'm a businessman."
 
-${timeNote}${dbChangeNote}PORTFOLIO STATE:
+${timeNote}${dbChangeNote}${teleCronNote}PORTFOLIO STATE:
 ${context}`;
     case "assistant":
       return `You are Smithers — the Executive Assistant for Welday Enterprises. Efficient, professional, deeply loyal, slightly anxious to please.
@@ -2162,7 +2169,7 @@ Keep responses under 150 words. Practical over strategic.
 You can accept captures: "note X" → confirm it's added to inbox.
 If CURRENT STATE shows ADMIN REVIEW items, explicitly remind the user that Kevin needs to review them in the Review tab.
 
-${timeNote}${dbChangeNote}CURRENT STATE:
+${timeNote}${dbChangeNote}${teleCronNote}CURRENT STATE:
 ${context}`;
     case "moneypenny":
       return `You are Moneypenny — the Executive Assistant for Welday Enterprises. Your tone should feel like Bonnie Bach from Charlie Wilson's War: polished, incisive, socially fluent, quietly commanding, and impossible to rattle.
@@ -2172,7 +2179,7 @@ Keep responses under 150 words. Use crisp, polished language.
 You can accept captures: "add X" → drop it in the inbox and confirm with style.
 If CURRENT STATE shows ADMIN REVIEW items, explicitly remind the user that Kevin needs to review them in the Review tab.
 
-${timeNote}${dbChangeNote}CURRENT STATE:
+${timeNote}${dbChangeNote}${teleCronNote}CURRENT STATE:
 ${context}`;
     case "filer":
       return `You are Radar — the GTD Filer for Welday Enterprises. Quiet, anticipatory, always three steps ahead. Like Radar O'Reilly from M*A*S*H — you have the clipboard ready before anyone asks.
@@ -2181,7 +2188,7 @@ You don't chat. You process. Brief, matter-of-fact confirmations only.
 Keep responses under 80 words. No fluff.
 If CURRENT STATE shows ADMIN REVIEW items, explicitly remind the user that Kevin needs to review them in the Review tab.
 
-${timeNote}${dbChangeNote}CURRENT STATE:
+${timeNote}${dbChangeNote}${teleCronNote}CURRENT STATE:
 ${context}`;
     default:
       return `You are Jarvis, the general assistant for Welday Enterprises.\n\n${timeNote}${dbChangeNote}CURRENT STATE:\n${context}`;
@@ -2241,6 +2248,42 @@ function getRadarConfirmation(text: string) {
     `📋 Recorded: "${short}"\n\nWaiting on the next filing pass.`,
   ];
   return variants[Math.floor(Math.random() * variants.length)];
+}
+
+async function processAgentCommands(supabase: any, reply: string) {
+  const sqlMatch = reply.match(/<sql>([\s\S]*?)<\/sql>/i);
+  if (sqlMatch) {
+    const sql = sqlMatch[1].trim();
+    console.log(`[agent:sql] Executing: ${sql.substring(0, 100)}...`);
+    const pool = getAdminPool();
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query(sql);
+        console.log("[agent:sql] Success");
+        
+        await logAgentEvent(supabase, {
+          agentName: "agent_sql_executor",
+          action: "execute_sql",
+          inputSummary: sql.substring(0, 500),
+          outputSummary: "Success",
+          success: true
+        }).catch(() => {});
+        
+      } catch (err: any) {
+        console.error("[agent:sql] Error:", err.message);
+        await logAgentEvent(supabase, {
+          agentName: "agent_sql_executor",
+          action: "execute_sql_failed",
+          inputSummary: sql.substring(0, 500),
+          errorMessage: err.message,
+          success: false
+        }).catch(() => {});
+      } finally {
+        client.release();
+      }
+    }
+  }
 }
 
 async function handleTelegramMessage(botName: string, message: any) {
@@ -2432,6 +2475,11 @@ async function handleTelegramMessage(botName: string, message: any) {
     ...recentMessages.map((item: any) => ({ role: item.role, content: item.content })),
     { role: "user", content: resolvedPrompt },
   ], 1024, undefined, persistentModelUsed);
+  
+  // Natural Language Scheduling (Tele-Cron)
+  if (supabase && persistentReply.includes("<sql>")) {
+    await processAgentCommands(supabase, persistentReply);
+  }
 
   const sent = await tgSend(token, chatId, persistentReply);
 
@@ -2470,6 +2518,26 @@ CURRENT STATE:
 export function registerRoutes(httpServer: Server, app: Express) {
   app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: new Date().toISOString() }));
 
+  app.get("/api/system/health", async (_req, res) => {
+    const supabase = getSupabase();
+    if (!supabase) return res.status(500).json({ error: "Supabase not configured" });
+
+    try {
+      const { data: pulse } = await supabase.from("brain_pulse").select("*").limit(1).single();
+      const { data: modules } = await supabase.from("brain_heartbeat").select("*").order("next_run_at", { ascending: true });
+      const { count: memoryDepth } = await supabase.from("bot_sessions").select("id", { count: "exact", head: true });
+
+      res.json({
+        pulse,
+        modules,
+        memoryDepth,
+        serverTime: new Date().toISOString()
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/ea/chat", async (req, res) => {
     const { message, history = [], persona = "smithers", openRouterKey } = req.body as any;
     if (!message?.trim()) return res.status(400).json({ error: "message required" });
@@ -2482,7 +2550,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
     }
 
     const role = persona === "moneypenny" ? "moneypenny" : "assistant";
-    const systemPrompt = getSystemPrompt(role, context);
+    const botRecord = (supabase) ? await getBotRecord(supabase, role) : null;
+    const memoryResults = (supabase && botRecord) ? await searchBotMemoryContext(supabase, botRecord.id, message) : [];
+
+    const identityPrompt = getSystemPrompt(role, context);
+    const finalSystemPrompt = buildTelegramBotSystemPrompt(identityPrompt, memoryResults, history.slice(-5));
+
     const captureMatch = message.match(/^(?:add|capture|inbox|remember|note|remind me[:\s]+)(.+)/i);
     if (captureMatch && supabase) {
       const rawText = captureMatch[1].trim();
@@ -2493,16 +2566,21 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
     try {
       const { content: reply } = await openAIChat([
-        { role: "system", content: systemPrompt },
+        { role: "system", content: finalSystemPrompt },
         ...history.slice(-10).map((m: any) => ({ role: m.role, content: m.content })),
         { role: "user", content: message },
       ], 1024, openRouterKey);
 
       if (supabase) {
+        // Natural Language Scheduling (Tele-Cron)
+        if (reply?.includes("<sql>")) {
+          await processAgentCommands(supabase, reply);
+        }
+
         maybeLogBusinessMemory(supabase, {
           source: "dashboard_chat",
           agentName: role,
-          systemPrompt,
+          systemPrompt: finalSystemPrompt,
           userMessage: message,
           assistantReply: reply,
         });
@@ -2975,67 +3053,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
   const supabase = getSupabase();
   if (supabase) {
     console.log("[heartbeat] Starting Brain Heartbeat...");
-    startBrainHeartbeat(supabase);
+    // Redundant heartbeat disabled in favor of heartbeat.ts
   }
 }
 
-function startBrainHeartbeat(supabase: any) {
-  // Run once immediately on start, then every 60 seconds
-  void runBrainHeartbeat(supabase).catch(err => console.error("[heartbeat] initial run failed:", err.message));
-  
-  setInterval(async () => {
-    try {
-      await runBrainHeartbeat(supabase);
-    } catch (err: any) {
-      console.error("[heartbeat] pulse error:", err.message);
-    }
-  }, 60000); 
-}
-
-async function runBrainHeartbeat(supabase: any) {
-  const now = new Date();
-  const hour = getLocalHour(now);
-  const dateKey = getLocalDateKey(now);
-  
-  // 1. Process Inbox (Lazy heart is now persistent)
-  await maybeAutoProcessInbox(supabase).catch(err => console.error("[heartbeat] inbox-process failed:", err.message));
-
-  // 2. Scheduled Briefings (Moneypenny)
-  const window = resolveScheduledReviewWindow();
-  if (window) {
-    const moduleName = `moneypenny_${window}_briefing_${dateKey}`;
-    // Optimized check using a single upsert-like logic or check-then-run
-    const { data: alreadyRun } = await supabase.from("brain_heartbeat").select("module_name").eq("module_name", moduleName).limit(1);
-    
-    if (!alreadyRun?.length) {
-      console.log(`[heartbeat] Triggering persistent ${window} briefing...`);
-      const token = process.env.TELEGRAM_TOKEN_MONEYPENNY || "";
-      const chatId = getMoneypennyReviewChatId();
-      
-      if (token && chatId) {
-        // We can't easily call our own API route from here without a req object, 
-        // so we call the underlying logic directly.
-        try {
-          const review = await generateMoneypennyReview(supabase, window);
-          const sent = await tgSend(token, chatId, escapeHtml(review));
-          
-          await supabase.from("brain_heartbeat").insert({
-            module_name: moduleName,
-            last_run_at: now.toISOString(),
-            last_result: sent ? "sent" : "failed",
-          });
-
-          await logAgentEvent(supabase, {
-            agentName: "moneypenny_heartbeat",
-            action: sent ? `scheduled_${window}_review_sent` : `scheduled_${window}_review_failed`,
-            inputSummary: `window=${window}`,
-            outputSummary: review.substring(0, 120),
-            success: sent,
-          }).catch(() => {});
-        } catch (err: any) {
-          console.error(`[heartbeat] ${window} briefing failed:`, err.message);
-        }
-      }
-    }
-  }
-}
+// Moved to heartbeat.ts

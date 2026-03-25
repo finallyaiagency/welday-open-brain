@@ -21,6 +21,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { format, isToday, isTomorrow, isSameDay, parseISO, startOfDay, addDays, subDays, formatDistanceToNow } from "date-fns";
 import { CalendarView } from "@/components/CalendarView";
 import { CalendarEventRow } from "@/components/CalendarEventRow";
+import { SystemHealthPanel } from "@/components/SystemHealthPanel";
+import { Cpu } from "lucide-react";
 
 const LIFE_DOMAIN_OPTIONS = [
   { value: "all", label: "All" },
@@ -761,7 +763,7 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
 }
 
 export function GTDPage() {
-  const [view, setView] = useState<"dashboard" | "kanban" | "list" | "calendar" | "waiting" | "reference" | "someday">("dashboard");
+  const [view, setView] = useState<"dashboard" | "kanban" | "list" | "calendar" | "waiting" | "reference" | "someday" | "system">("dashboard");
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [lifeDomain, setLifeDomain] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
@@ -929,6 +931,14 @@ export function GTDPage() {
           >
             <Sparkles size={14} /> Someday
           </Button>
+          <Button 
+            variant={view === "system" ? "secondary" : "ghost"} 
+            size="sm" 
+            onClick={() => setView("system")}
+            className="h-8 gap-1.5 px-3"
+          >
+            <Cpu size={14} /> System
+          </Button>
         </div>
       </header>
 
@@ -1038,6 +1048,9 @@ export function GTDPage() {
             <AnimatePresence mode="wait">
               {view === "reference" && (
                 <ReferenceView key="reference-view" references={references} />
+              )}
+              {view === "system" && (
+                <SystemHealthPanel key="system-health-view" />
               )}
               {view === "calendar" && (
                 <div key="calendar-view-container" className="grid grid-cols-1 xl:grid-cols-4 gap-6">
