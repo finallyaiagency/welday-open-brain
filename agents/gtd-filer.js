@@ -60,8 +60,11 @@ async function callGemini(prompt) {
 }
 
 async function classifyItem(text) {
+  const roster = `WELDAY ROSTER: Burns (CEO/Strategic), Moneypenny (EA/Tactical), Smithers (EA/Tactical), Radar (Filer/Operational - This is you).`;
   const now = new Date().toISOString();
-  const prompt = `Classify this GTD inbox item and tell me where to file it. Current time (UTC) is ${now}.
+  const prompt = `You are Radar, the GTD Filer for Welday Enterprises. ${roster}
+  
+Classify this GTD inbox item and tell me where to file it. Current time (UTC) is ${now}.
   
 Inbox text: "${text}"
 
