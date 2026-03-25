@@ -492,6 +492,17 @@ export async function processInboxItem(id: string, filedTo = "manual") {
 
 export async function processInboxItems(ids: string[], filedTo = "manual-bulk") {
   if (!ids.length) return;
+
+  if (filedTo === "manual-bulk") {
+    // If just clicking "Process all", try to use the batch AI processor first
+    try {
+      const response = await fetch(`/api/gtd/process?force=true`, { method: "POST" });
+      if (response.ok) return await response.json();
+    } catch (err) {
+      console.warn("[GTD] Bulk AI process failed, falling back to manual flags:", err);
+    }
+  }
+
   const { error } = await supabase
     .from("gtd_inbox")
     .update({

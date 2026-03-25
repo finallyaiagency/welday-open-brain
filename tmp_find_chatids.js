@@ -5,28 +5,20 @@ dotenv.config({ path: "dashboard/.env" });
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!supabaseUrl || !supabaseKey) {
-  console.error("Missing Supabase env vars");
-  process.exit(1);
-}
-
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-async function checkLogs() {
+async function findChatIds() {
   const { data, error } = await supabase
-    .from("agent_logs")
-    .select("*")
-    .eq("agent_name", "moneypenny_scheduler")
-    .order("created_at", { ascending: false })
+    .from("bot_sessions")
+    .select("slug")
     .limit(10);
 
   if (error) {
-    console.error("Error fetching logs:", error);
+    console.error(error);
     return;
   }
 
-  console.log(JSON.stringify(data, null, 2));
+  console.log("Session slugs:", data.map(s => s.slug));
 }
 
-checkLogs();
+findChatIds();

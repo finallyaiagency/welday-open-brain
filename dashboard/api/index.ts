@@ -398,7 +398,7 @@ async function getSchemaReviewContext() {
 async function fetchPendingSchemaReviews(sb: any, limit = 10) {
   const { data, error } = await sb
     .from("schema_changelog")
-    .select("id, description, rationale, created_at, table_name, column_name")
+    .select("id, description, created_at, table_name, column_name")
     .eq("status", "proposed")
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -2496,7 +2496,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         }
         results.push(modelResult);
       }
-      return send(res, 200, { results });
+      res.setHeader("Cache-Control", "no-store, max-age=0, must-revalidate");
+      return send(res, 200, { results, ts: new Date().toISOString() });
     }
 
     return send(res, 404, { error: "not found" });

@@ -118,14 +118,38 @@ const WELCOME_MESSAGE: Message = {
 };
 
 export function AssistantPage() {
-  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const saved = localStorage.getItem("assistant_messages");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return parsed.map((m: any) => ({
+          ...m,
+          ts: new Date(m.ts)
+        }));
+      } catch (e) {
+        console.error("Failed to parse saved messages", e);
+        return [WELCOME_MESSAGE];
+      }
+    }
+    return [WELCOME_MESSAGE];
+  });
+
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [openRouterKey, setOpenRouterKey] = useState("");
+  const [openRouterKey, setOpenRouterKey] = useState(() => localStorage.getItem("openrouter_key") || "");
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [retryMessage, setRetryMessage] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem("assistant_messages", JSON.stringify(messages));
+  }, [messages]);
+
+  useEffect(() => {
+    localStorage.setItem("openrouter_key", openRouterKey);
+  }, [openRouterKey]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -223,13 +247,14 @@ export function AssistantPage() {
               <p className="text-[11px] text-muted-foreground mt-0.5">Tactical · Today & This Week</p>
             </div>
           </div>
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={clearChat}
-            title="Clear conversation"
-            className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            className="h-7 text-[10px] gap-1.5 px-2 font-medium text-muted-foreground hover:text-foreground border border-border/50"
           >
-            <RefreshCw size={13} />
-          </button>
+            <RefreshCw size={11} /> New Chat
+          </Button>
         </div>
         <ContextStrip />
       </div>

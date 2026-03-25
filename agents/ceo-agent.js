@@ -11,7 +11,7 @@ const { createClient } = require('@supabase/supabase-js');
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview'; // Switch to working model
+const GEMINI_MODEL = 'gemini-2.0-flash'; // Switch to working model
 
 async function fetchWithTimeout(url, options = {}, timeout = 25000) {
   const controller = new AbortController();
@@ -49,9 +49,19 @@ async function callGemini(systemPrompt, userPrompt) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] },
+      systemInstruction: { parts: [{ text: systemPrompt + "\n\nUse Google Search to verify facts if you are unsure or need current information." }] },
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
+      tools: [
+        {
+          google_search_retrieval: {
+            dynamic_retrieval_config: {
+              mode: "MODE_DYNAMIC",
+              dynamic_threshold: 0.3
+            }
+          }
+        }
+      ]
     }),
   }, 30000);
   const data = await response.json();

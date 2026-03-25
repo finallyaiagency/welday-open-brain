@@ -14,7 +14,7 @@ const supabase = createClient(
 );
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+const GEMINI_MODEL = 'gemini-2.0-flash';
 
 async function fetchWithTimeout(url, options = {}, timeout = 25000) {
   const controller = new AbortController();

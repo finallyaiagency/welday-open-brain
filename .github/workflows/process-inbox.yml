@@ -2,57 +2,19 @@ name: Process GTD Inbox
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 jobs:
   process:
     runs-on: ubuntu-latest
-    timeout-minutes: 58
-    concurrency:
-      group: process-gtd-inbox
-      cancel-in-progress: false
     env:
       GTD_PROCESS_SECRET: ${{ secrets.GTD_PROCESS_SECRET }}
-      CRON_SECRET: ${{ secrets.CRON_SECRET }}
     steps:
-      - name: Process inbox items older than 10 minutes
+      - name: Trigger GTD Inbox Processing
         run: |
-          set -euo pipefail
-
-          process_inbox() {
-            if [ -n "${GTD_PROCESS_SECRET}" ]; then
-              curl --fail-with-body --show-error --silent \
-                -X POST "https://welday-open-brain.vercel.app/api/gtd/process" \
-                -H "x-cron-secret: ${GTD_PROCESS_SECRET}" \
-                -H "Content-Type: application/json" \
-                -d "{}"
-              return 0
-            fi
-
-            if [ -n "${CRON_SECRET}" ]; then
-              curl --fail-with-body --show-error --silent \
-                -H "Authorization: Bearer ${CRON_SECRET}" \
-                "https://welday-open-brain.vercel.app/api/gtd/process"
-              return 0
-            fi
-
-            echo "::error::Missing GitHub Actions secret. Set GTD_PROCESS_SECRET or CRON_SECRET in finallyaiagency/welday-open-brain."
-            return 1
-          }
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            process_inbox
-            exit 0
-          fi
-
-          for minute in 00 10 20 30 40 50; do
-            target_epoch="$(date -u -d "$(date -u +%Y-%m-%dT%H):${minute}:00" +%s)"
-            now_epoch="$(date -u +%s)"
-            if [ "${target_epoch}" -gt "${now_epoch}" ]; then
-              sleep "$((target_epoch - now_epoch))"
-            fi
-
-            echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Running scheduled inbox processing"
-            process_inbox
-          done
+          curl --fail --show-error --silent \
+            -X POST "https://welday-open-brain.vercel.app/api/gtd/process?force=true" \
+            -H "x-cron-secret: ${{ secrets.GTD_PROCESS_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d "{}"

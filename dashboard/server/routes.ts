@@ -134,8 +134,16 @@ async function getAuthenticatedAdminEmail(req: any) {
   return admins.includes(email) ? email : null;
 }
 
-const GEMINI_MODEL = "gemini-3.1-flash-lite-preview";
-const AUTO_PROCESS_AFTER_MS = 30 * 1000;
+const FREE_MODELS = [
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
+  "gemini-flash-latest",
+  "gemini-pro-latest"
+];
+const GEMINI_MODEL = FREE_MODELS[0];
+const COOLDOWNS = new Map<string, number>();
+const COOLDOWN_DURATION = 120 * 1000; // 2 minutes
+const AUTO_PROCESS_AFTER_MS = 30 * 1000; // 30 seconds
 const USER_TIMEZONE = "America/New_York";
 const GEMINI_EMBEDDING_MODEL = "text-embedding-004";
 const GEMINI_EMBEDDING_DIMENSIONS = 768;
@@ -528,7 +536,7 @@ async function getSchemaReviewContext() {
 async function fetchPendingSchemaReviews(supabase: any, limit = 10) {
   const { data, error } = await supabase
     .from("schema_changelog")
-    .select("id, description, rationale, created_at, table_name, column_name")
+    .select("id, description, created_at, table_name, column_name")
     .eq("status", "proposed")
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -1272,7 +1280,7 @@ GTD destinations:
 - project: Outcome requiring multiple steps
 - someday: Idea to revisit later
 - reference: Information to keep (not actionable)
-- calendar: A scheduled appointment, meeting, or event with a specific time and date. MUST use this for any appointment.
+- calendar: A scheduled appointment, meeting, or event with a specific time and date. MUST use this for any text containing "appointment", "meeting", "call with", "scheduled", or "at [time]".
 - trash: Not worth keeping
 
 Respond with a JSON array of objects, one for each and every ITEM_X provided.
@@ -1328,7 +1336,7 @@ GTD destinations:
 - project: Outcome requiring multiple steps
 - someday: Idea to revisit later
 - reference: Information to keep (not actionable)
-- calendar: A scheduled appointment, meeting, or event with a specific time and date. MUST use this for any appointment.
+- calendar: A scheduled appointment, meeting, or event with a specific time and date. MUST use this for any text containing "appointment", "meeting", "call with", "scheduled", or "at [time]".
 - trash: Not worth keeping
 
 Respond with JSON only:
@@ -1688,50 +1696,123 @@ async function maybeLogBusinessMemory(supabase: any, params: { source: string; a
   }
 }
 
-async function openAIChat(messages: any[], maxTokens = 300, openRouterKey?: string, model = GEMINI_MODEL) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY not set");
-
-  const systemMsg = messages.find((m: any) => m.role === "system");
-  const turns = messages.filter((m: any) => m.role !== "system");
-  const contents = turns.map((m: any) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }));
-
-  const body: any = {
-    contents,
-    generationConfig: { temperature: 0.6, maxOutputTokens: maxTokens },
-  };
-  if (systemMsg) {
-    body.systemInstruction = { parts: [{ text: systemMsg.content }] };
+function getGeminiKeys(): string[] {
+  const keys: string[] = [];
+  if (process.env.GEMINI_API_KEY) keys.push(process.env.GEMINI_API_KEY);
+  let i = 2;
+  while (true) {
+    const k = (process.env as any)[`GEMINI_API_KEY_${i}`];
+    if (!k) break;
+    keys.push(k);
+    i++;
   }
+  return keys;
+}
 
-  const selectedModel = model?.trim() || GEMINI_MODEL;
-  if (messages.some(m => m.content.includes("TRIGGER_429"))) {
-     const err: any = new Error("Rate limit exceeded");
-     err.status = 429;
-     throw err;
-  }
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${key}`;
-  const res = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  }, 60000);
+async function openAIChat(messages: any[], maxTokens = 300, openRouterKey?: string, model = GEMINI_MODEL): Promise<{ content: string; tokens: number }> {
+  const keys = getGeminiKeys();
+  const now = Date.now();
+  const summary: string[] = [];
 
-  if (!res.ok) {
-    const errorText = await res.text();
-    if (res.status === 429 && openRouterKey?.trim()) {
-      return callOpenRouter(messages, maxTokens, openRouterKey.trim());
+  const callWithKey = async (key: string, m: string) => {
+    const systemMsg = messages.find((msg: any) => msg.role === "system");
+    const turns = messages.filter((msg: any) => msg.role !== "system");
+    const contents = turns.map((msg: any) => ({
+      role: msg.role === "assistant" ? "model" : "user",
+      parts: [{ text: msg.content }],
+    }));
+
+    const body: any = {
+      contents,
+      generationConfig: { temperature: 0.6, maxOutputTokens: maxTokens },
+      tools: [
+        {
+          google_search_retrieval: {
+            dynamic_retrieval_config: {
+              mode: "MODE_DYNAMIC",
+              dynamic_threshold: 0.3
+            }
+          }
+        }
+      ]
+    };
+    if (systemMsg) {
+      body.systemInstruction = { parts: [{ text: systemMsg.content + "\n\nUse Google Search to verify facts if you are unsure or need current information." }] };
     }
-    throw new Error(`Gemini: ${errorText}`);
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`;
+    const res = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }, 60000);
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      const err = new Error(`Gemini ${res.status}: ${errorText}`) as any;
+      err.status = res.status;
+      throw err;
+    }
+
+    const data = await res.json() as any;
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    const content = parts.map((p: any) => p.text || "").join("");
+    return { content, tokens: data.usageMetadata?.totalTokenCount || 0 };
+  };
+
+  // Pass 1: Multiple Models and Keys with Cooldown check
+  if (keys.length > 0) {
+    for (const targetModel of FREE_MODELS) {
+      let attempt = 1;
+      for (const key of keys) {
+        const cacheKey = `${targetModel}:${key}`;
+        const cooldownUntil = COOLDOWNS.get(cacheKey) || 0;
+
+        if (now < cooldownUntil) {
+          summary.push(`${targetModel}@K${attempt}: Cooldown`);
+          attempt++;
+          continue;
+        }
+
+        try {
+          const result = await callWithKey(key, targetModel);
+          COOLDOWNS.delete(cacheKey);
+          return result;
+        } catch (err: any) {
+          summary.push(`${targetModel}@K${attempt}: ${err.status || "Err"}`);
+          if (err.status === 429) {
+            COOLDOWNS.set(cacheKey, now + COOLDOWN_DURATION);
+          }
+          attempt++;
+        }
+      }
+    }
+
+    // Last resort: Ignore cooldowns
+    for (const targetModel of FREE_MODELS) {
+      for (const key of keys) {
+        try {
+          const result = await callWithKey(key, targetModel);
+          COOLDOWNS.delete(`${targetModel}:${key}`);
+          return result;
+        } catch (err: any) {
+          // just try next
+        }
+      }
+    }
   }
 
-  const data = await res.json() as any;
-  const parts = data.candidates?.[0]?.content?.parts || [];
-  const content = parts.map((p: any) => p.text || "").join("");
-  return { content, tokens: data.usageMetadata?.totalTokenCount || 0 };
+  // OpenRouter Fallback
+  if (openRouterKey?.trim()) {
+    try {
+      const orResult = await callOpenRouter(messages, maxTokens, openRouterKey.trim());
+      return orResult;
+    } catch (err: any) {
+      summary.push(`OpenRouter: Error (${err.message})`);
+    }
+  }
+
+  throw new Error(`All LLM models exhausted. Debug: ${summary.join(" | ")}`);
 }
 
 async function buildContext(supabase: any): Promise<string> {
@@ -1752,16 +1833,20 @@ async function buildContext(supabase: any): Promise<string> {
   const [
     { data: overdue }, { data: todayItems }, { data: soon },
     { data: inbox }, { data: waiting }, { data: ventures },
-    { data: alerts }, schemaReviews,
+    { data: alerts }, { data: calendar }, schemaReviews,
+    { data: memory }, { data: bizMemory },
   ] = await Promise.all([
-    supabase.from("gtd_actions").select("title,context,due_date,life_domain,ventures(name)").eq("status", "active").lt("due_date", today).limit(8),
-    supabase.from("gtd_actions").select("title,context,energy,life_domain,ventures(name)").eq("status", "active").eq("due_date", today).limit(8),
+    supabase.from("gtd_actions").select("title,context,due_date,life_domain,ventures(name)").eq("status", "active").lt("due_date", today).order("due_date", { ascending: true }).limit(8),
+    supabase.from("gtd_actions").select("title,context,energy,life_domain,ventures(name)").eq("status", "active").eq("due_date", today).order("created_at", { ascending: true }).limit(8),
     supabase.from("gtd_actions").select("title,due_date,energy,life_domain,ventures(name)").eq("status", "active").gt("due_date", today).lte("due_date", in3).order("due_date").limit(6),
     supabase.from("gtd_inbox").select("raw_text,life_domain").eq("processed", false).limit(5),
     supabase.from("gtd_actions").select("title,delegated_to,life_domain").eq("status", "waiting").limit(5),
     supabase.from("ventures").select("name,status,readiness_score,risk_level,monthly_revenue_usd").eq("status", "active").order("readiness_score", { ascending: false }),
     supabase.from("ceo_recommendations").select("title,priority,type").eq("status", "new").in("priority", ["critical", "high"]).order("generated_at", { ascending: false }).limit(3),
+    supabase.from("calendar_events").select("title,start_at,end_at,all_day,location,life_domain,ventures(name)").neq("status", "cancelled").gte("start_at", now.toISOString()).order("start_at", { ascending: true }).limit(10),
     getPendingSchemaReviewSummary(supabase, 3),
+    supabase.from("bot_memory").select("content,created_at,entry_type").order("created_at", { ascending: false }).limit(5),
+    supabase.from("business_memory").select("summary,agent_name,created_at,topics").order("created_at", { ascending: false }).limit(5),
   ]);
 
   const lines: string[] = [];
@@ -1771,6 +1856,15 @@ async function buildContext(supabase: any): Promise<string> {
   if (todayItems?.length) lines.push(`\nDUE TODAY (${todayItems.length}):`, ...todayItems.map((a: any) => `  • [${normalizeLifeDomain(a.life_domain).toUpperCase()}] ${a.title}${a.context ? ` ${a.context}` : ""}${a.ventures?.name ? ` [${a.ventures.name}]` : ""}`));
   else lines.push(`\nDUE TODAY: nothing scheduled`);
   if (soon?.length) lines.push(`\nNEXT 3 DAYS (${soon.length}):`, ...soon.map((a: any) => `  • [${normalizeLifeDomain(a.life_domain).toUpperCase()}] ${a.title}${a.ventures?.name ? ` [${a.ventures.name}]` : ""} — ${a.due_date}`));
+
+  if (calendar?.length) {
+    lines.push(`\nUPCOMING EVENTS (${calendar.length}):`);
+    calendar.forEach((event: any) => {
+      const venture = event.ventures?.name ? ` [${event.ventures.name}]` : "";
+      const where = event.location ? ` @ ${event.location}` : "";
+      lines.push(`  • [${normalizeLifeDomain(event.life_domain).toUpperCase()}] ${formatEventTime(event.start_at, event.end_at, event.all_day)} ${event.title}${venture}${where}`);
+    });
+  }
 
   const ic = inbox?.length || 0;
   lines.push(`\nINBOX: ${ic} unprocessed`);
@@ -1783,6 +1877,20 @@ async function buildContext(supabase: any): Promise<string> {
   }
   if (ventures?.length) lines.push(`\nACTIVE VENTURES: ${ventures.map((v: any) => `${v.name} ${v.readiness_score}%`).join(", ")}`);
   if (alerts?.length) lines.push(`\nCEO ALERTS: ${alerts.map((r: any) => `[${r.priority}] ${r.title}`).join("; ")}`);
+  
+  if (memory?.length) {
+    lines.push("\nRECENT CONVERSATION MEMORY:");
+    memory.forEach((m: any) => {
+      lines.push(`  • [${m.entry_type || 'note'}] ${m.content.substring(0, 500)}${m.content.length > 500 ? '...' : ''}`);
+    });
+  }
+
+  if (bizMemory?.length) {
+    lines.push("\nBUSINESS MEMORY:");
+    bizMemory.forEach((b: any) => {
+      lines.push(`  • [${b.agent_name}] ${b.summary}${b.topics ? ` (Topics: ${b.topics.join(', ')})` : ''}`);
+    });
+  }
 
   return lines.join("\n");
 }
@@ -1806,10 +1914,12 @@ function getLocalHour(date = new Date()) {
 
 function resolveScheduledReviewWindow(requested?: string | null) {
   if (requested === "morning" || requested === "am") return "morning" as const;
+  if (requested === "noon" || requested === "midday") return "noon" as const;
   if (requested === "evening" || requested === "eod" || requested === "pm") return "evening" as const;
 
   const hour = getLocalHour();
   if (hour === 7) return "morning" as const;
+  if (hour === 12) return "noon" as const;
   if (hour === 17) return "evening" as const;
   return null;
 }
@@ -1853,10 +1963,11 @@ function formatEventTime(startAt: string, endAt?: string | null, allDay?: boolea
   return `${startText}-${endText}`;
 }
 
-async function buildMoneypennyReviewPayload(supabase: any, window: "morning" | "evening") {
+async function buildMoneypennyReviewPayload(supabase: any, window: "morning" | "noon" | "evening") {
   const now = new Date();
   const today = getLocalDateKey(now);
-  const horizon = new Date(now.getTime() + (window === "morning" ? 36 : 18) * 60 * 60 * 1000);
+  const lookAheadHours = window === "morning" ? 36 : (window === "noon" ? 24 : 18);
+  const horizon = new Date(now.getTime() + lookAheadHours * 60 * 60 * 1000);
 
   const [
     { data: overdue },
@@ -1954,7 +2065,10 @@ async function buildMoneypennyReviewPayload(supabase: any, window: "morning" | "
   }
 
   const fallbackSections: string[] = [];
-  fallbackSections.push(window === "morning" ? "Good morning. Here's the lay of the land." : "End of day check-in. Here's what's still pressing.");
+  const fallbackGreeting = window === "morning" 
+    ? "Good morning. Here's the lay of the land." 
+    : (window === "noon" ? "Good afternoon. Here is your midday status update." : "End of day check-in. Here's what's still pressing.");
+  fallbackSections.push(fallbackGreeting);
 
   if (todayItems?.length) {
     fallbackSections.push(`Today: ${todayItems.slice(0, 3).map((item: any) => item.title).join("; ")}.`);
@@ -1990,11 +2104,11 @@ async function buildMoneypennyReviewPayload(supabase: any, window: "morning" | "
   };
 }
 
-async function generateMoneypennyReview(supabase: any, window: "morning" | "evening") {
+async function generateMoneypennyReview(supabase: any, window: "morning" | "noon" | "evening") {
   const payload = await buildMoneypennyReviewPayload(supabase, window);
-  const instruction = window === "morning"
-    ? "Write the scheduled 7:00 AM Telegram review."
-    : "Write the scheduled 5:00 PM Telegram review.";
+  let instruction = "Write the scheduled 7:00 AM Telegram review.";
+  if (window === "noon") instruction = "Write the scheduled 12:00 PM (Noon) Telegram review.";
+  if (window === "evening") instruction = "Write the scheduled 5:00 PM Telegram review.";
 
   try {
     const { content } = await openAIChat([
@@ -2645,14 +2759,14 @@ export function registerRoutes(httpServer: Server, app: Express) {
       ? {
           message: force
             ? `Processed ${result.processed} of ${result.total} inbox items immediately.`
-            : `Processed ${result.processed} of ${result.total} inbox items older than 10 minutes.`,
+            : `Processed ${result.processed} of ${result.total} inbox items older than 30 seconds.`,
           ...result,
           force,
         }
       : {
           message: force
             ? "Nothing waiting in the inbox right now."
-            : "No inbox items older than 10 minutes were waiting.",
+            : "No inbox items older than 30 seconds were waiting.",
           ...result,
           force,
         });
@@ -2820,7 +2934,108 @@ export function registerRoutes(httpServer: Server, app: Express) {
     res.json({ message: "CEO agent triggered — run ceo-agent.js with env vars" });
   });
 
-  app.all("/api/*", (_req, res) => {
+  app.get("/api/test-models", async (_req, res) => {
+    const keys = getGeminiKeys();
+    const results: any[] = [];
+    const now = Date.now();
+
+    for (const model of FREE_MODELS) {
+      let modelResult = { model, statuses: [] as string[] };
+      for (let i = 0; i < keys.length; i++) {
+        const cacheKey = `${model}:${keys[i]}`;
+        const cooldownUntil = COOLDOWNS.get(cacheKey) || 0;
+        
+        if (now < cooldownUntil) {
+          const mins = Math.ceil((cooldownUntil - now) / 60000);
+          modelResult.statuses.push(`Key ${i+1}: Cooldown (${mins}m)`);
+          continue;
+        }
+
+        try {
+          const response = await fetchWithTimeout(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${keys[i]}`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }] }] }) },
+            10000
+          );
+          modelResult.statuses.push(`Key ${i+1}: ${response.status}`);
+        } catch (e: any) {
+          modelResult.statuses.push(`Key ${i+1}: Err`);
+        }
+      }
+      results.push(modelResult);
+    }
+    res.setHeader("Cache-Control", "no-store, max-age=0, must-revalidate");
+    return res.json({ results, ts: new Date().toISOString() });
+  });
+
+  app.all("/api/*path", (_req, res) => {
     res.status(404).json({ error: "API endpoint not found" });
   });
+
+  const supabase = getSupabase();
+  if (supabase) {
+    console.log("[heartbeat] Starting Brain Heartbeat...");
+    startBrainHeartbeat(supabase);
+  }
+}
+
+function startBrainHeartbeat(supabase: any) {
+  // Run once immediately on start, then every 60 seconds
+  void runBrainHeartbeat(supabase).catch(err => console.error("[heartbeat] initial run failed:", err.message));
+  
+  setInterval(async () => {
+    try {
+      await runBrainHeartbeat(supabase);
+    } catch (err: any) {
+      console.error("[heartbeat] pulse error:", err.message);
+    }
+  }, 60000); 
+}
+
+async function runBrainHeartbeat(supabase: any) {
+  const now = new Date();
+  const hour = getLocalHour(now);
+  const dateKey = getLocalDateKey(now);
+  
+  // 1. Process Inbox (Lazy heart is now persistent)
+  await maybeAutoProcessInbox(supabase).catch(err => console.error("[heartbeat] inbox-process failed:", err.message));
+
+  // 2. Scheduled Briefings (Moneypenny)
+  const window = resolveScheduledReviewWindow();
+  if (window) {
+    const moduleName = `moneypenny_${window}_briefing_${dateKey}`;
+    // Optimized check using a single upsert-like logic or check-then-run
+    const { data: alreadyRun } = await supabase.from("brain_heartbeat").select("module_name").eq("module_name", moduleName).limit(1);
+    
+    if (!alreadyRun?.length) {
+      console.log(`[heartbeat] Triggering persistent ${window} briefing...`);
+      const token = process.env.TELEGRAM_TOKEN_MONEYPENNY || "";
+      const chatId = getMoneypennyReviewChatId();
+      
+      if (token && chatId) {
+        // We can't easily call our own API route from here without a req object, 
+        // so we call the underlying logic directly.
+        try {
+          const review = await generateMoneypennyReview(supabase, window);
+          const sent = await tgSend(token, chatId, escapeHtml(review));
+          
+          await supabase.from("brain_heartbeat").insert({
+            module_name: moduleName,
+            last_run_at: now.toISOString(),
+            last_result: sent ? "sent" : "failed",
+          });
+
+          await logAgentEvent(supabase, {
+            agentName: "moneypenny_heartbeat",
+            action: sent ? `scheduled_${window}_review_sent` : `scheduled_${window}_review_failed`,
+            inputSummary: `window=${window}`,
+            outputSummary: review.substring(0, 120),
+            success: sent,
+          }).catch(() => {});
+        } catch (err: any) {
+          console.error(`[heartbeat] ${window} briefing failed:`, err.message);
+        }
+      }
+    }
+  }
 }

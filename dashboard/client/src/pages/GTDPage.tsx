@@ -18,7 +18,7 @@ import { Check, Plus, Calendar, Clock, FolderPlus, Hash, LayoutDashboard, List, 
 import type { GtdAction, GtdProject, GtdInbox, GtdReference, GtdSomeday } from "@shared/schema";
 import { formatSourceLabel } from "@/lib/sourceLabels";
 import { motion, AnimatePresence } from "framer-motion";
-import { format, isToday, isTomorrow, isSameDay, parseISO, startOfDay, addDays, formatDistanceToNow } from "date-fns";
+import { format, isToday, isTomorrow, isSameDay, parseISO, startOfDay, addDays, subDays, formatDistanceToNow } from "date-fns";
 import { CalendarView } from "@/components/CalendarView";
 import { CalendarEventRow } from "@/components/CalendarEventRow";
 
@@ -406,7 +406,13 @@ function InboxPanel() {
   
   const processMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch("/api/gtd/process?force=true");
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const response = await fetch("/api/gtd/process?force=true", {
+        headers: {
+          ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+        },
+      });
       if (!response.ok) throw new Error("Failed to process inbox");
       return response.json();
     },

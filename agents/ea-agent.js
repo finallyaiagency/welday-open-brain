@@ -13,7 +13,7 @@ const supabase = createClient(
 );
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+const GEMINI_MODEL = 'gemini-2.0-flash';
 
 async function fetchWithTimeout(url, options = {}, timeout = 25000) {
   const controller = new AbortController();
@@ -55,9 +55,19 @@ async function callGemini(systemPrompt, messages, temperature = 0.5, maxTokens =
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] },
+      systemInstruction: { parts: [{ text: systemPrompt + "\n\nUse Google Search to verify facts if you are unsure or need current information." }] },
       contents,
       generationConfig: { temperature, maxOutputTokens: maxTokens },
+      tools: [
+        {
+          google_search_retrieval: {
+            dynamic_retrieval_config: {
+              mode: "MODE_DYNAMIC",
+              dynamic_threshold: 0.3
+            }
+          }
+        }
+      ]
     }),
   }, 25000);
 
@@ -80,6 +90,7 @@ async function buildContext() {
     supabase.from('gtd_actions').select('title, delegated_to, due_date').eq('status', 'waiting').limit(5),
     supabase.from('ventures').select('name, status, readiness_score, risk_level, monthly_revenue_usd').eq('status', 'active').order('readiness_score', { ascending: false }),
     supabase.from('ceo_recommendations').select('title, type, priority').eq('status', 'new').in('priority', ['critical', 'high']).limit(3),
+    supabase.from('calendar_events').select('title, start_at, end_at, all_day, location, ventures(name)').neq('status', 'cancelled').gte('start_at', now.toISOString()).order('start_at', { ascending: true }).limit(10),
   ]), 5000, "Supabase context fetch");
 
   const [
@@ -90,6 +101,7 @@ async function buildContext() {
     { data: waitingItems },
     { data: activeVentures },
     { data: newCeoRecs },
+    { data: calendarEvents },
   ] = results;
 
   const lines = [];
@@ -120,6 +132,16 @@ async function buildContext() {
     soonActions.forEach(a => {
       const venture = a.ventures?.name ? ` [${a.ventures.name}]` : '';
       lines.push(`  • ${a.title}${venture} — ${a.due_date}`);
+    });
+  }
+ 
+  if (calendarEvents?.length) {
+    lines.push(`\nUPCOMING EVENTS (${calendarEvents.length}):`);
+    calendarEvents.forEach(e => {
+      const venture = e.ventures?.name ? ` [${e.ventures.name}]` : '';
+      const where = e.location ? ` @ ${e.location}` : '';
+      const start = new Date(e.start_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      lines.push(`  • ${start} ${e.title}${venture}${where}`);
     });
   }
 

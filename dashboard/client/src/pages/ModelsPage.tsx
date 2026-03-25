@@ -18,15 +18,21 @@ type ModelStatus = {
 };
 
 export function ModelsPage() {
-  const { data, isLoading, refetch, isRefetching } = useQuery<{ results: ModelStatus[] }>({
+  const { data, isLoading, refetch, isRefetching } = useQuery<{ results: ModelStatus[]; ts: string }>({
     queryKey: ["/api/test-models"],
     queryFn: async () => {
-      const res = await fetch("/api/test-models");
+      const res = await fetch(`/api/test-models?t=${Date.now()}`);
       if (!res.ok) throw new Error("Failed to fetch model status");
       return res.json();
     },
     refetchInterval: 300_000, // Refresh every 5 mins
+    staleTime: 0,
+    gcTime: 0,
   });
+
+  const lastUpdated = data?.ts 
+    ? new Date(data.ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" }) 
+    : null;
 
   const replenishmentInfo = [
     { label: "Daily Reset", value: "12:00 AM PT", icon: Clock, desc: "Global quota resets daily" },
@@ -47,7 +53,14 @@ export function ModelsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">AI Models Status</h1>
-          <p className="text-muted-foreground mt-1">Real-time health of your Gemini API keys and specialized models.</p>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-muted-foreground">Real-time health of your Gemini API keys.</p>
+            {lastUpdated && (
+              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wider">
+                Updated {lastUpdated}
+              </span>
+            )}
+          </div>
         </div>
         <button 
           onClick={() => refetch()}
