@@ -2646,7 +2646,6 @@ export function registerRoutes(httpServer: Server, app: Express) {
     if (!token) return res.status(500).json({ error: "TELEGRAM_TOKEN_MONEYPENNY not configured" });
     if (!chatId) return res.status(500).json({ error: "MONEYPENNY_REVIEW_CHAT_ID not configured" });
 
-    await maybeAutoProcessInbox(supabase);
     const review = await generateMoneypennyReview(supabase, window);
     const sent = await tgSend(token, chatId, escapeHtml(review));
 

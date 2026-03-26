@@ -2,16 +2,16 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { createClient } from "@supabase/supabase-js";
 
 const FREE_MODELS = [
-  "gemini-3-flash-preview",
-  "gemini-2.5-flash",
-  "gemini-3.1-flash-lite-preview",
-  "gemma-3-27b-it"
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-lite",
+  "gemini-flash-latest",
+  "gemini-pro-latest"
 ];
 const GEMINI_MODEL = FREE_MODELS[0];
 
 const COOLDOWNS = new Map<string, number>();
-const COOLDOWN_DURATION = 3 * 60 * 60 * 1000; // 3 hours
-const AUTO_PROCESS_AFTER_MS = 10 * 60 * 1000;
+const COOLDOWN_DURATION = 120 * 1000; // 2 minutes
+const AUTO_PROCESS_AFTER_MS = 30 * 1000; // 30 seconds
 const USER_TIMEZONE = "America/New_York";
 const GEMINI_EMBEDDING_MODEL = "text-embedding-004";
 const GEMINI_EMBEDDING_DIMENSIONS = 768;
@@ -1585,10 +1585,11 @@ async function upsertBotMemoryEmbeddings(sb: any, params: { memoryId: string; bo
   return { chunkCount: rows.length };
 }
 
-async function buildMoneypennyReviewPayload(sb: any, window: "morning" | "evening") {
+async function buildMoneypennyReviewPayload(sb: any, window: "morning" | "noon" | "evening") {
   const now = new Date();
   const today = getLocalDateKey(now);
-  const horizon = new Date(now.getTime() + (window === "morning" ? 36 : 18) * 60 * 60 * 1000);
+  const lookAheadHours = window === "morning" ? 36 : (window === "noon" ? 24 : 18);
+  const horizon = new Date(now.getTime() + lookAheadHours * 60 * 60 * 1000);
 
   const [
     { data: overdue },
@@ -1722,11 +1723,11 @@ async function buildMoneypennyReviewPayload(sb: any, window: "morning" | "evenin
   };
 }
 
-async function generateMoneypennyReview(sb: any, window: "morning" | "evening") {
+async function generateMoneypennyReview(sb: any, window: "morning" | "noon" | "evening") {
   const payload = await buildMoneypennyReviewPayload(sb, window);
-  const instruction = window === "morning"
-    ? "Write the scheduled 7:00 AM Telegram review."
-    : "Write the scheduled 5:00 PM Telegram review.";
+  let instruction = "Write the scheduled 7:00 AM Telegram review.";
+  if (window === "noon") instruction = "Write the scheduled 12:00 PM (Noon) Telegram review.";
+  if (window === "evening") instruction = "Write the scheduled 5:00 PM Telegram review.";
 
   try {
     const { reply } = await gemini(
@@ -2006,7 +2007,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       if (!token) return send(res, 500, { error: "TELEGRAM_TOKEN_MONEYPENNY not configured" });
       if (!chatId) return send(res, 500, { error: "MONEYPENNY_REVIEW_CHAT_ID not configured" });
 
-      await maybeAutoProcessInbox(sb);
       const review = await generateMoneypennyReview(sb, window);
       const sent = await tgSend("moneypenny", token, chatId, escapeHtml(review));
 
